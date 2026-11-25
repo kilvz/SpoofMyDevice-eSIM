@@ -4,6 +4,10 @@ SpoofMyDevice 2.0 is an Xposed module and companion app for building, saving, an
 
 The companion UI is written entirely in Jetpack Compose and uses Material 3 Expressive components, a Tonal Spot palette, and the 2025 Material color specification.
 
+## Download
+
+Grab the release-signed APK from the [latest release](https://github.com/kilvz/SpoofMyDevice-eSIM/releases/latest). Builds published before `v2.0.1-esim.2` were debug-signed, so uninstall those before switching.
+
 ## Features
 
 - Reusable preset-based and fully editable custom profiles
