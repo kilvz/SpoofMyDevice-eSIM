@@ -62,7 +62,7 @@ public final class CardDaemon {
      * Bumped whenever the wire behaviour changes, so a client never keeps
      * talking to a daemon left over from an older APK.
      */
-    static final int DAEMON_VERSION = 2;
+    static final int DAEMON_VERSION = 3;
     static final String STATE_FILE = "nbridge-daemon.properties";
     static final String LOG_FILE = "/data/local/tmp/spoofmydevice-cardd.log";
     private static final String CHANNEL_REQUEST_CLASS =
