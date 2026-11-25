@@ -121,7 +121,8 @@ jobs:
 
           - Real framework card, subscription, EID and \`EuiccManager\` state are preserved when present.
           - Telephony and eUICC spoofing is skipped for LPA packages so the module cannot hide a removable card.
-          - Use NekokoLPA2's privileged Telephony (TMAPI) reader on ROMs without OMAPI.
+          - Built-in NekokoLPA2 root bridge: the module serves \`content://ee.nekoko.nbridge.provider\` from a root daemon, so removable eUICCs can be read on ROMs without OMAPI or a privileged TMAPI grant.
+          - Use NekokoLPA2's Telephony (TMAPI) reader when the ROM supports it, or select the \`T-SIM\` reader provided by the root bridge.
           EOF
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

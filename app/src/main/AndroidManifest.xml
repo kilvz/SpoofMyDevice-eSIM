@@ -55,6 +55,16 @@
             android:exported="true"
             android:grantUriPermissions="true" />
 
+        <!--
+            Serves NekokoLPA2's NBridge card protocol from a root daemon.
+            Only NekokoLPA2 and the shell user are accepted by the provider.
+        -->
+        <provider
+            android:name=".card.CardBridgeProvider"
+            android:authorities="ee.nekoko.nbridge.provider"
+            android:enabled="true"
+            android:exported="true" />
+
         <receiver
             android:name=".ConfigBridgeReceiver"
             android:exported="true">

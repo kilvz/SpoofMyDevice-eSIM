@@ -97,6 +97,37 @@ If the ROM has no OMAPI service (`android.se.omapi`), an unprivileged OMAPI LPA 
 
 The lighter OTBridge helper module (`otbridge-magisk-kernelsu-*.zip`) provides the same Telephony bridge to the normal app when it is available for your NekokoLPA2 release. EasyEUICC (`im.angry.easyeuicc`) is the unprivileged OMAPI build and has no Telephony fallback, so use NekokoLPA2 or the privileged OpenEUICC build on ROMs without OMAPI.
 
+### Built-in NekokoLPA2 root bridge (ROMs without OMAPI or TMAPI)
+
+SpoofMyDevice also ships its own NBridge provider. NekokoLPA2 already knows how to use an external `content://ee.nekoko.nbridge.provider` helper, so the module can answer that protocol from a small daemon running as root. This works even when the ROM has no `android.se.omapi` service, no secure-element HAL, and no privileged `MODIFY_PHONE_STATE` grant for the NekokoLPA2 app.
+
+How it works:
+
+1. NekokoLPA2 lists readers through its NBridge provider.
+2. SpoofMyDevice starts `CardDaemon` through `su` the first time it is asked.
+3. The daemon, running as uid 0, opens logical channels through the platform telephony service and forwards APDUs.
+4. `CardBridgeProvider` answers the same `listSlots` / `connectLogicalChannel` / `transmitLogical` / `transmitBasic` / `closeLogicalChannel` calls that NekokoLPA2's OTBridge helper uses.
+
+Setup:
+
+1. Install this APK and keep it installed (the Xposed module already is).
+2. Open NekokoLPA2 and refresh the reader list. When the root prompt appears, grant root to **SpoofMyDevice** and keep it granted.
+3. Select the `T-SIM1` (or `T-SIM<n>`) reader. It is the root bridge; `T-SIM1p0` style names appear on multi-port cards.
+4. If the reader is missing, make sure no other NBridge helper owns the authority. Uninstall/disable OTBridge if it is installed, or add NekokoLPA2 to the SpoofMyDevice LSPosed scope so the module can intercept NBridge calls directly.
+
+The NekokoLPA2 privileged Magisk module is optional for this path. It is still useful for NekokoLPA2's own built-in Telephony reader, but the root bridge above does not depend on `MODIFY_PHONE_STATE` being granted to NekokoLPA2.
+
+Diagnostics:
+
+```bash
+adb shell content call --uri content://ee.nekoko.nbridge.provider --method diag
+adb shell su -c 'cat /data/local/tmp/spoofmydevice-cardd.log'
+```
+
+The first command starts the daemon and prints the detected slots, card states and the telephony methods the ROM exposes. The second shows the channel-open and APDU log.
+
+The provider accepts calls only from `ee.nekoko.nlpa2`, `ee.nekoko.nbridge`, the shell user, and SpoofMyDevice itself. Other apps cannot use it to reach the card.
+
 ## Build From Source
 
 ```bash
