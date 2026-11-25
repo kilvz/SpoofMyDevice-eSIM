@@ -11,6 +11,20 @@ The UI is written in Jetpack Compose with Material 3 Expressive components.
 [Latest release](https://github.com/kilvz/SpoofMyDevice-eSIM/releases/latest) ·
 [Changelog](CHANGELOG.md)
 
+## Credits
+
+SpoofMyDevice was created by **BuSung-dev**:
+[github.com/BuSung-dev/SpoofMyDevice](https://github.com/BuSung-dev/SpoofMyDevice).
+
+This repository (`kilvz/SpoofMyDevice-eSIM`) is an independent fork that adds
+the eSIM/eUICC surface and the NekokoLPA2 card bridge. It is **not affiliated
+with or endorsed by** the original author. The original project and this fork
+are distributed under the MIT License together with the upstream usage terms
+(see [LICENSE](LICENSE)).
+
+Thanks also to the LSPosed and Xposed communities, and to the NekokoLPA2,
+OpenEUICC and EasyEUICC projects for the LPA side.
+
 ## What it does
 
 - Builds reusable presets or fully custom profiles (model, fingerprint, Build
@@ -307,7 +321,18 @@ GitHub Actions signs every release with the repository secrets
 With this setup the root bridge lists `T-SIM2`, opens ISD-R and lets
 NekokoLPA2 list and switch profiles.
 
-## Disclaimer
+## License and upstream policy
 
-This project is intended for research, testing and authorized use. Follow
-applicable laws, platform rules and the policies of the apps being tested.
+SpoofMyDevice is distributed under the MIT License. The full license text and
+the upstream disclaimer are in [LICENSE](LICENSE); the same terms apply to this
+fork.
+
+- Provided for educational, testing and development purposes only.
+- Use it only on devices you own or are authorized to modify.
+- Do not use it to bypass app restrictions, violate terms of service, or engage
+  in fraudulent activity.
+- The authors are not responsible for misuse, damage or terms-of-service
+  violations, and provide no warranty.
+
+By using this software you accept these terms and full responsibility for the
+consequences.

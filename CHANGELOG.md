@@ -127,3 +127,14 @@ Integrity) cannot be changed locally.
    ```
    su -c 'content call --uri content://ee.nekoko.nbridge.provider --method diag'
    ```
+
+## Credits
+
+SpoofMyDevice was created by **BuSung-dev**:
+[github.com/BuSung-dev/SpoofMyDevice](https://github.com/BuSung-dev/SpoofMyDevice).
+
+This repository (`kilvz/SpoofMyDevice-eSIM`) is an independent fork that adds
+the eSIM/eUICC surface and the NekokoLPA2 card bridge. It is not affiliated with
+or endorsed by the original author. The original project and this fork are
+distributed under the MIT License together with the upstream usage terms in
+[LICENSE](LICENSE).

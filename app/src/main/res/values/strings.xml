@@ -197,7 +197,7 @@
     <string name="app_info_package_title">Package name</string>
     <string name="app_info_version_format">Version %1$s (%2$d)</string>
     <string name="app_info_overview_format">App name: %1$s\nVersion: %2$s (%3$d)\nPackage: %4$s</string>
-    <string name="app_info_credits_body">Based on the original DeviceSpoofLab Hooks project. Thanks to the LSPosed and Xposed communities.</string>
+    <string name="app_info_credits_body">Based on the original SpoofMyDevice project by BuSung-dev (github.com/BuSung-dev/SpoofMyDevice), MIT licensed. eSIM/eUICC support is added by this fork. Thanks to the LSPosed and Xposed communities.</string>
     <string name="app_info_links_body">GitHub project link and future source links will appear here.</string>
     <string name="app_info_github_button">Open GitHub</string>
     <string name="app_info_github_title">GitHub</string>
