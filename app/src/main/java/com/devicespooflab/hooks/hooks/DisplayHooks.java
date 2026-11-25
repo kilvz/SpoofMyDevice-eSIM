@@ -230,6 +230,7 @@ public class DisplayHooks {
         bounds.bottom = bounds.top + height;
     }
 
+    @SuppressWarnings("deprecation")
     private static void applyMetrics(DisplayMetrics metrics) {
         if (!ConfigManager.shouldApplyScreenMetrics()) {
             return;

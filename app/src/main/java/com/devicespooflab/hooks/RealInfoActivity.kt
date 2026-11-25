@@ -1,7 +1,9 @@
 package com.devicespooflab.hooks
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -63,7 +65,17 @@ class RealInfoActivity : AppCompatActivity() {
 @Composable
 private fun AppInfoScreen(activity: RealInfoActivity) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    val packageInfo = remember { activity.packageManager.getPackageInfo(activity.packageName, 0) }
+    val packageInfo = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            activity.packageManager.getPackageInfo(
+                activity.packageName,
+                PackageManager.PackageInfoFlags.of(0)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            activity.packageManager.getPackageInfo(activity.packageName, 0)
+        }
+    }
     val appIcon = remember {
         activity.applicationInfo.loadIcon(activity.packageManager).toBitmap(128, 128).asImageBitmap()
     }

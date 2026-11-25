@@ -1,5 +1,7 @@
 package com.devicespooflab.hooks.ui
 
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -104,7 +106,17 @@ fun SpoofMyDeviceApp(appState: SpoofAppState) {
 
     key(destination) {
         val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-        val packageInfo = remember { appState.activity.packageManager.getPackageInfo(appState.activity.packageName, 0) }
+        val packageInfo = remember {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                appState.activity.packageManager.getPackageInfo(
+                    appState.activity.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appState.activity.packageManager.getPackageInfo(appState.activity.packageName, 0)
+            }
+        }
         val page: @Composable () -> Unit = {
             Scaffold(
                 modifier = Modifier

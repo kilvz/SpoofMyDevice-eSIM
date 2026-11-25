@@ -81,8 +81,8 @@ The profile editor exposes these as the **eSIM support** and **Forward eSIM inst
 ## Build From Source
 
 ```bash
-git clone https://github.com/BuSung-dev/SpoofMyDevice.git
-cd SpoofMyDevice
+git clone https://github.com/kilvz/SpoofMyDevice-eSIM.git
+cd SpoofMyDevice-eSIM
 ./gradlew assembleDebug
 ```
 
@@ -91,6 +91,30 @@ The debug APK is generated at:
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
+
+### Signed release builds
+
+The release build reads the signing key from environment variables so the keystore never has to live in the repository:
+
+| Variable | Meaning |
+| --- | --- |
+| `SIGNING_KEYSTORE_PATH` | Path to the PKCS#12/JKS keystore |
+| `SIGNING_STORE_PASSWORD` | Keystore password |
+| `SIGNING_KEY_ALIAS` | Key alias |
+| `SIGNING_KEY_PASSWORD` | Key password |
+
+```bash
+export SIGNING_KEYSTORE_PATH=/path/to/release.jks
+export SIGNING_STORE_PASSWORD=...
+export SIGNING_KEY_ALIAS=spoofmydevice
+export SIGNING_KEY_PASSWORD=...
+./gradlew assembleRelease
+```
+
+The signed APK is written to `app/build/outputs/apk/release/app-release.apk`.
+
+GitHub Actions signs every build using the same four values stored as repository secrets (`SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS`, `SIGNING_KEY_PASSWORD`) and verifies the result with `apksigner` before uploading the artifact.
+
 
 ## Disclaimer
 

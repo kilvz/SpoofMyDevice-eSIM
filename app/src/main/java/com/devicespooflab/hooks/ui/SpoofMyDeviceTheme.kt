@@ -52,7 +52,7 @@ fun SpoofMyDeviceTheme(
     }
     val seedColor = remember(selectedSystemColor, selectedColorStyle) {
         if (selectedSystemColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Color(resources.getColor(android.R.color.system_accent1_500, context.theme))
+            Color(context.getColor(android.R.color.system_accent1_500))
         } else {
             when (selectedColorStyle) {
                 AppSettingsStore.COLOR_STYLE_BLUE -> blueSeed
