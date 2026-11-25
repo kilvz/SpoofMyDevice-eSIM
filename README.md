@@ -131,7 +131,7 @@ su -c 'content call --uri content://ee.nekoko.nbridge.provider --method probe'
 su -c 'cat /data/local/tmp/spoofmydevice-cardd.log'
 ```
 
-The `diag` command starts the daemon and prints the detected slots, card states and the telephony methods the ROM exposes. `probe` opens the ISD-R applet (`A0000005591010FFFFFFFF8900000100`) on the first slot and reports the select result; if that succeeds, NekokoLPA2 can read and write the card through the bridge. The last command shows the channel-open and APDU log.
+The `diag` command starts the daemon and prints the detected slots, card states and the telephony methods the ROM exposes. The `itelephony` entry shows whether the daemon bound the phone service directly; the ICC calls use that binder first and only fall back to `TelephonyManager`, because the framework's lazy telephony helper is null inside an `app_process` daemon and makes channel open fail with `getTelephonyServiceRegisterer()`. `probe` opens the ISD-R applet (`A0000005591010FFFFFFFF8900000100`) on the first slot and reports the select result; if that succeeds, NekokoLPA2 can read and write the card through the bridge. The last command shows the channel-open and APDU log.
 
 The provider accepts calls only from `ee.nekoko.nlpa2`, `ee.nekoko.nlpa2.open`, `ee.nekoko.nbridge`, the shell user, and SpoofMyDevice itself. Other apps cannot use it to reach the card.
 

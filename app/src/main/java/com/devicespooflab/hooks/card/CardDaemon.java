@@ -2,6 +2,7 @@ package com.devicespooflab.hooks.card;
 
 import android.content.Context;
 import android.os.Build;
+import android.os.IBinder;
 import android.os.Looper;
 import android.telephony.TelephonyManager;
 import android.util.Log;
@@ -60,6 +61,8 @@ public final class CardDaemon {
     private static final Set<String> TERMINAL_CAPABILITIES_SENT = new HashSet<>();
 
     private static TelephonyManager telephony;
+    private static Object telephonyService;
+    private static Class<?> telephonyServiceClass;
     private static Context systemContext;
     private static String token = "";
 
@@ -268,6 +271,23 @@ public final class CardDaemon {
             }
         }
         result.put("telephonyMethods", methods);
+
+        JSONObject binder = new JSONObject();
+        try {
+            Class<?> serviceClass = telephonyServiceClass();
+            binder.put("bound", true);
+            JSONArray serviceMethods = new JSONArray();
+            for (Method method : serviceClass.getMethods()) {
+                if (method.getName().startsWith("icc")) {
+                    serviceMethods.put(method.getName() + signature(method));
+                }
+            }
+            binder.put("methods", serviceMethods);
+        } catch (Throwable throwable) {
+            binder.put("bound", false);
+            binder.put("error", readable(throwable));
+        }
+        result.put("itelephony", binder);
         return result;
     }
 
@@ -401,20 +421,99 @@ public final class CardDaemon {
 
     // --- telephony reflection -------------------------------------------------
 
+    /**
+     * A single ICC operation that can run against either telephony back end.
+     */
+    private interface CardCall {
+        Object run(Class<?> owner, Object target) throws Exception;
+    }
+
+    /**
+     * Bind {@code ITelephony} straight from the service manager.
+     *
+     * <p>{@link TelephonyManager} builds its binder on demand through
+     * {@code TelephonyFrameworkInitializer}, which is only initialised by a
+     * normally launched app or by the system server. Inside an
+     * {@code app_process} daemon that helper is null, so every ICC call fails
+     * with {@code NullPointerException: ... getTelephonyServiceRegisterer()
+     * ... on a null object reference}. Asking the phone service directly skips
+     * that helper; as uid 0 the platform's {@code MODIFY_PHONE_STATE} checks
+     * pass.
+     */
+    private static Object telephonyService() throws Exception {
+        Object cached = telephonyService;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (CardDaemon.class) {
+            if (telephonyService != null) {
+                return telephonyService;
+            }
+            Class<?> serviceManager = Class.forName("android.os.ServiceManager");
+            IBinder binder = (IBinder) serviceManager.getMethod("getService", String.class)
+                    .invoke(null, "phone");
+            if (binder == null) {
+                throw new IllegalStateException("The phone binder service is not published");
+            }
+            Class<?> stub = Class.forName("com.android.internal.telephony.ITelephony$Stub");
+            Object service = stub.getMethod("asInterface", IBinder.class).invoke(null, binder);
+            if (service == null) {
+                throw new IllegalStateException("ITelephony.asInterface returned null");
+            }
+            telephonyServiceClass = Class.forName("com.android.internal.telephony.ITelephony");
+            telephonyService = service;
+            log("bound ITelephony from ServiceManager");
+            return service;
+        }
+    }
+
+    private static Class<?> telephonyServiceClass() throws Exception {
+        telephonyService();
+        return telephonyServiceClass;
+    }
+
+    /**
+     * Runs an ICC call on {@code ITelephony} first and retries through
+     * {@link TelephonyManager} when the binder path is unavailable.
+     */
+    private static Object withTelephony(String label, CardCall call) throws Exception {
+        Exception direct = null;
+        try {
+            return call.run(telephonyServiceClass(), telephonyService());
+        } catch (Throwable throwable) {
+            direct = asException(throwable);
+            log(label + " via ITelephony failed: " + stackTrace(throwable));
+        }
+        try {
+            return call.run(TelephonyManager.class, telephony);
+        } catch (Throwable throwable) {
+            Exception viaManager = asException(throwable);
+            log(label + " via TelephonyManager failed: " + stackTrace(throwable));
+            RuntimeException combined = new RuntimeException("ITelephony: "
+                    + readable(direct) + "; TelephonyManager: " + readable(viaManager));
+            if (direct != null) {
+                combined.addSuppressed(direct);
+            }
+            combined.addSuppressed(viaManager);
+            throw combined;
+        }
+    }
+
     private static Object open(int slot, int port, String aid) throws Exception {
-        Method method = firstMethod(
-                "iccOpenLogicalChannelByPort",
-                "iccOpenLogicalChannelBySlot",
-                "iccOpenLogicalChannel");
-        if (method == null) {
-            throw new NoSuchMethodException("No ICC logical channel API on this ROM");
-        }
-        Object[] args = openArgs(method, slot, port, aid);
-        if (args == null) {
-            throw new NoSuchMethodException("Unsupported " + method.getName()
-                    + signature(method));
-        }
-        return invoke(method, args);
+        return withTelephony("open " + aid, (owner, target) -> {
+            Method method = firstMethod(owner, "iccOpenLogicalChannelByPort",
+                    "iccOpenLogicalChannelBySlot", "iccOpenLogicalChannel");
+            if (method == null) {
+                throw new NoSuchMethodException("No ICC logical channel API on "
+                        + owner.getSimpleName());
+            }
+            Object[] args = openArgs(method, slot, port, aid);
+            if (args == null) {
+                throw new NoSuchMethodException("Unsupported " + method.getName()
+                        + signature(method));
+            }
+            return invoke(target, method, args);
+        });
     }
 
     private static Object[] openArgs(Method method, int slot, int port, String aid) {
@@ -452,69 +551,24 @@ public final class CardDaemon {
         return null;
     }
 
+
     private static String transmitLogical(int slot, int port, int channel, Apdu apdu)
             throws Exception {
-        Method method = firstMethod(
-                "iccTransmitApduLogicalChannelByPort",
-                "iccTransmitApduLogicalChannelBySlot",
-                "iccTransmitApduLogicalChannel");
-        if (method == null) {
-            throw new NoSuchMethodException("No ICC logical transmit API on this ROM");
-        }
-        Object[] args = transmitLogicalArgs(method, slot, port, channel, apdu);
-        if (args == null) {
-            throw new NoSuchMethodException("Unsupported " + method.getName()
-                    + signature(method));
-        }
-        return (String) invoke(method, args);
-    }
-
-    private static String transmitBasic(int slot, int port, Apdu apdu) throws Exception {
-        Method method = firstMethod(
-                "iccTransmitApduBasicChannelByPort",
-                "iccTransmitApduBasicChannelBySlot",
-                "iccTransmitApduBasicChannel");
-        if (method == null) {
-            throw new NoSuchMethodException("No ICC basic transmit API on this ROM");
-        }
-        Object[] args = transmitBasicArgs(method, slot, port, apdu);
-        if (args == null) {
-            throw new NoSuchMethodException("Unsupported " + method.getName()
-                    + signature(method));
-        }
-        return (String) invoke(method, args);
-    }
-
-    private static void close(int slot, int port, int channel) throws Exception {
-        Method method = firstMethod(
-                "iccCloseLogicalChannelByPort",
-                "iccCloseLogicalChannelBySlot",
-                "iccCloseLogicalChannel");
-        if (method == null) {
-            throw new NoSuchMethodException("No ICC close API on this ROM");
-        }
-        Class<?>[] types = method.getParameterTypes();
-        Object[] args = null;
-        String name = method.getName();
-        if ("iccCloseLogicalChannelByPort".equals(name)) {
-            if (types.length == 3) {
-                args = new Object[]{slot, port, channel};
-            } else if (types.length == 2) {
-                args = new Object[]{port, channel};
+        Object response = withTelephony("transmit logical channel " + channel, (owner, target) -> {
+            Method method = firstMethod(owner, "iccTransmitApduLogicalChannelByPort",
+                    "iccTransmitApduLogicalChannelBySlot", "iccTransmitApduLogicalChannel");
+            if (method == null) {
+                throw new NoSuchMethodException("No ICC logical transmit API on "
+                        + owner.getSimpleName());
             }
-        } else if ("iccCloseLogicalChannelBySlot".equals(name)) {
-            if (types.length == 2) {
-                args = new Object[]{slot, channel};
+            Object[] args = transmitLogicalArgs(method, slot, port, channel, apdu);
+            if (args == null) {
+                throw new NoSuchMethodException("Unsupported " + method.getName()
+                        + signature(method));
             }
-        } else if ("iccCloseLogicalChannel".equals(name)) {
-            if (types.length == 1) {
-                args = new Object[]{channel};
-            }
-        }
-        if (args == null) {
-            throw new NoSuchMethodException("Unsupported " + name + signature(method));
-        }
-        invoke(method, args);
+            return invoke(target, method, args);
+        });
+        return response instanceof String ? (String) response : null;
     }
 
     private static Object[] transmitLogicalArgs(
@@ -602,9 +656,61 @@ public final class CardDaemon {
         return null;
     }
 
-    private static Method firstMethod(String... names) {
+
+    private static String transmitBasic(int slot, int port, Apdu apdu) throws Exception {
+        Object response = withTelephony("transmit basic channel", (owner, target) -> {
+            Method method = firstMethod(owner, "iccTransmitApduBasicChannelByPort",
+                    "iccTransmitApduBasicChannelBySlot", "iccTransmitApduBasicChannel");
+            if (method == null) {
+                throw new NoSuchMethodException("No ICC basic transmit API on "
+                        + owner.getSimpleName());
+            }
+            Object[] args = transmitBasicArgs(method, slot, port, apdu);
+            if (args == null) {
+                throw new NoSuchMethodException("Unsupported " + method.getName()
+                        + signature(method));
+            }
+            return invoke(target, method, args);
+        });
+        return response instanceof String ? (String) response : null;
+    }
+
+    private static void close(int slot, int port, int channel) throws Exception {
+        withTelephony("close logical channel " + channel, (owner, target) -> {
+            Method method = firstMethod(owner, "iccCloseLogicalChannelByPort",
+                    "iccCloseLogicalChannelBySlot", "iccCloseLogicalChannel");
+            if (method == null) {
+                throw new NoSuchMethodException("No ICC close API on "
+                        + owner.getSimpleName());
+            }
+            Class<?>[] types = method.getParameterTypes();
+            Object[] args = null;
+            String name = method.getName();
+            if ("iccCloseLogicalChannelByPort".equals(name)) {
+                if (types.length == 3) {
+                    args = new Object[]{slot, port, channel};
+                } else if (types.length == 2) {
+                    args = new Object[]{port, channel};
+                }
+            } else if ("iccCloseLogicalChannelBySlot".equals(name)) {
+                if (types.length == 2) {
+                    args = new Object[]{slot, channel};
+                }
+            } else if ("iccCloseLogicalChannel".equals(name)) {
+                if (types.length == 1) {
+                    args = new Object[]{channel};
+                }
+            }
+            if (args == null) {
+                throw new NoSuchMethodException("Unsupported " + name + signature(method));
+            }
+            return invoke(target, method, args);
+        });
+    }
+
+    private static Method firstMethod(Class<?> owner, String... names) {
         for (String name : names) {
-            for (Method method : TelephonyManager.class.getMethods()) {
+            for (Method method : owner.getMethods()) {
                 if (method.getName().equals(name)) {
                     return method;
                 }
@@ -613,9 +719,9 @@ public final class CardDaemon {
         return null;
     }
 
-    private static Object invoke(Method method, Object[] args) throws Exception {
+    private static Object invoke(Object target, Method method, Object[] args) throws Exception {
         try {
-            return method.invoke(telephony, args);
+            return method.invoke(target, args);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             if (cause instanceof Exception) {
@@ -643,6 +749,14 @@ public final class CardDaemon {
     }
 
     private static int simState(int slot) {
+        try {
+            Method method = telephonyServiceClass().getMethod("getSimStateForSlotIndex", int.class);
+            Object value = invoke(telephonyService(), method, new Object[]{slot});
+            if (value instanceof Integer) {
+                return (Integer) value;
+            }
+        } catch (Throwable ignored) {
+        }
         try {
             return telephony.getSimState(slot);
         } catch (Throwable ignored) {
