@@ -27,6 +27,7 @@ public class TelephonyHooks {
     private static final int SYNTHETIC_SIM_SLOT_INDEX = 0;
     private static final int SYNTHETIC_CARD_ID = 1;
     private static final int SUBSCRIPTION_TYPE_REMOTE_SIM = 1;
+    private static final int PROFILE_CLASS_OPERATIONAL = 2;
     private static final List<WeakReference<Object>> SYNTHETIC_SUBSCRIPTION_INFOS = new ArrayList<>();
 
     public static void hook(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -910,6 +911,8 @@ public class TelephonyHooks {
         hookSubscriptionInfoGetter(subscriptionInfoClass, "getCardId",
                 () -> ConfigManager.shouldReportEsim() ? SYNTHETIC_CARD_ID : 0);
         hookSubscriptionInfoGetter(subscriptionInfoClass, "getPortIndex", () -> 0);
+        hookSubscriptionInfoGetter(subscriptionInfoClass, "getProfileClass",
+                () -> ConfigManager.shouldReportEsim() ? PROFILE_CLASS_OPERATIONAL : 0);
         hookSubscriptionInfoGetter(subscriptionInfoClass, "getUsageSetting", () -> 0);
         hookSubscriptionInfoGetter(subscriptionInfoClass, "getIccId", () -> firstNonBlank(ConfigManager.getICCID(), ""));
     }
