@@ -318,15 +318,31 @@ final class CardBridgeClient {
     // --- helpers --------------------------------------------------------------
 
     private String moduleApkPath() {
+        PackageManager manager = context.getPackageManager();
         try {
-            PackageManager manager = context.getPackageManager();
             String path = manager.getApplicationInfo(MODULE_PACKAGE, 0).sourceDir;
             if (path != null && new File(path).isFile()) {
                 return path;
             }
         } catch (Throwable ignored) {
         }
-        return context.getApplicationInfo().sourceDir;
+        try {
+            android.content.pm.ProviderInfo provider =
+                    manager.resolveContentProvider(CardBridgeProvider.AUTHORITY, 0);
+            if (provider != null && MODULE_PACKAGE.equals(provider.packageName)
+                    && provider.applicationInfo != null
+                    && provider.applicationInfo.sourceDir != null
+                    && new File(provider.applicationInfo.sourceDir).isFile()) {
+                return provider.applicationInfo.sourceDir;
+            }
+        } catch (Throwable ignored) {
+        }
+        String own = context.getApplicationInfo().sourceDir;
+        if (MODULE_PACKAGE.equals(context.getPackageName())) {
+            return own;
+        }
+        throw new IllegalStateException(
+                "Cannot locate the SpoofMyDevice APK to start the card daemon");
     }
 
     private static String randomToken() {

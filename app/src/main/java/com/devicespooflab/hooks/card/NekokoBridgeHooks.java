@@ -77,10 +77,17 @@ public final class NekokoBridgeHooks {
                             if (context == null) {
                                 return;
                             }
-                            param.setResult(CardBridge.call(
+                            Bundle result = CardBridge.call(
                                     context.getApplicationContext(),
                                     (String) param.args[1],
-                                    (Bundle) param.args[3]));
+                                    (Bundle) param.args[3]);
+                            if (result != null && result.getBoolean("ok", false)) {
+                                param.setResult(result);
+                            } else {
+                                XposedBridge.log(TAG
+                                        + ": root card bridge unavailable; leaving the call to"
+                                        + " the installed NBridge provider");
+                            }
                         }
                     });
             XposedBridge.log(TAG + ": Nekoko NBridge calls routed to root card daemon");
