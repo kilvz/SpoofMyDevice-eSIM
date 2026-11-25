@@ -66,7 +66,7 @@ Applying a profile broadcasts a config-change event so already hooked processes 
 
 Phone profiles advertise eSIM/eUICC support by default. The module hooks the eUICC-facing telephony surface so target apps see an enabled `EuiccManager`, a stable synthetic EID, and a synthetic `UiccCardInfo` / `UiccPortInfo` marked as an embedded SIM.
 
-When a target app asks Android to install a profile through `EuiccManager.downloadSubscription(...)`, the activation code is extracted and forwarded to NekokoLPA as an `lpa:1$...` deep link. NekokoLPA already handles that URI, so no changes to NekokoLPA are required. This makes carrier or reseller apps that push an eSIM directly to the device hand the request to NekokoLPA instead of failing on hardware that has no real eUICC.
+When a target app asks Android to install a profile through `EuiccManager.downloadSubscription(...)`, the activation code is extracted and forwarded to NekokoLPA as an `lpa:1$...` deep link (unless the profile disables forwarding). NekokoLPA already handles that URI, so no changes to NekokoLPA are required. This makes carrier or reseller apps that push an eSIM directly to the device hand the request to NekokoLPA instead of failing on hardware that has no real eUICC.
 
 Relevant configuration keys:
 
@@ -76,7 +76,7 @@ Relevant configuration keys:
 | `device.eid` | generated | Optional explicit EID; a Luhn-valid value is generated when empty |
 | `device.esim_forward` | `true` | Forward `EuiccManager` provisioning requests to NekokoLPA |
 
-The profile editor exposes these as the **eSIM support** and **Forward eSIM installs to NekokoLPA** switches plus an **EID** field in the advanced section. Forwarding is skipped when the physical device already reports an enabled eUICC, so native LPA behavior is preserved on real eSIM hardware. Both NekokoLPA package names (`ee.nekoko.nlpa2.open` and `ee.nekoko.nlpa2`) are supported.
+The profile editor exposes these as the **eSIM support** and **Forward eSIM installs to NekokoLPA** switches plus an **EID** field in the advanced section. Forwarding uses the NekokoLPA deep-link handler; both package names (`ee.nekoko.nlpa2.open` and `ee.nekoko.nlpa2`) are supported.
 
 ## Build From Source
 

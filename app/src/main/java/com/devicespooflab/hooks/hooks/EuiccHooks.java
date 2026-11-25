@@ -44,8 +44,6 @@ public final class EuiccHooks {
     private static final List<WeakReference<Object>> SYNTHETIC_CARDS = new ArrayList<>();
     private static final List<WeakReference<Object>> SYNTHETIC_PORTS = new ArrayList<>();
 
-    private static volatile Method realIsEnabledMethod;
-
     private EuiccHooks() {
     }
 
@@ -77,12 +75,6 @@ public final class EuiccHooks {
     }
 
     private static void hookEuiccManager(Class<?> euiccManager, Class<?> euiccInfoClass, String packageName) {
-        try {
-            realIsEnabledMethod = XposedHelpers.findMethodExact(euiccManager, "isEnabled");
-        } catch (Throwable ignored) {
-            realIsEnabledMethod = null;
-        }
-
         hookBefore(euiccManager, "isEnabled", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
@@ -136,9 +128,6 @@ public final class EuiccHooks {
                 if (code == null) {
                     return;
                 }
-                if (realEuiccEnabled(param.thisObject)) {
-                    return;
-                }
                 Context context = ConfigManager.getAppContext();
                 if (context == null) {
                     XposedBridge.log(TAG + ": no context available to forward eSIM activation");
@@ -188,19 +177,6 @@ public final class EuiccHooks {
             ((PendingIntent) param.args[2]).send(EUICC_RESULT_OK);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": failed to complete activation callback: " + t);
-        }
-    }
-
-    private static boolean realEuiccEnabled(Object euiccManager) {
-        Method method = realIsEnabledMethod;
-        if (method == null || euiccManager == null) {
-            return false;
-        }
-        try {
-            Object result = XposedBridge.invokeOriginalMethod(method, euiccManager, null);
-            return Boolean.TRUE.equals(result);
-        } catch (Throwable ignored) {
-            return false;
         }
     }
 
