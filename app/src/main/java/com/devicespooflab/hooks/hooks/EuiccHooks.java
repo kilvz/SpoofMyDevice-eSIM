@@ -41,6 +41,19 @@ public final class EuiccHooks {
         "ee.nekoko.nlpa2"
     };
 
+    /**
+     * Apps that talk to a real eUICC card. They must see the framework's real card,
+     * subscription and EID data, so telephony/eUICC spoofing is skipped for them.
+     */
+    private static final String[] PHYSICAL_EUICC_PACKAGES = {
+        "ee.nekoko.nlpa2",
+        "ee.nekoko.nlpa2.open",
+        "ee.nekoko.nlpa2.community",
+        "ee.nekoko.nbridge",
+        "im.angry.openeuicc",
+        "im.angry.easyeuicc"
+    };
+
     private static final List<WeakReference<Object>> SYNTHETIC_CARDS = new ArrayList<>();
     private static final List<WeakReference<Object>> SYNTHETIC_PORTS = new ArrayList<>();
 
@@ -75,9 +88,15 @@ public final class EuiccHooks {
     }
 
     private static void hookEuiccManager(Class<?> euiccManager, Class<?> euiccInfoClass, String packageName) {
-        hookBefore(euiccManager, "isEnabled", new XC_MethodHook() {
+        hookAfter(euiccManager, "isEnabled", new XC_MethodHook() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            protected void afterHookedMethod(MethodHookParam param) {
+                // Only answer true when the real framework says there is no eUICC. A device
+                // with a working eUICC (including a removable card exposed by the ROM) keeps
+                // its native answer.
+                if (param.getResult() instanceof Boolean && (Boolean) param.getResult()) {
+                    return;
+                }
                 if (ConfigManager.shouldReportEsim()) {
                     param.setResult(true);
                 }
@@ -87,6 +106,11 @@ public final class EuiccHooks {
         hookBefore(euiccManager, "getEid", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
+                Object original = invokeOriginal(param);
+                if (original instanceof String && !((String) original).isEmpty()) {
+                    param.setResult(original);
+                    return;
+                }
                 if (!ConfigManager.shouldReportEsim()) {
                     return;
                 }
@@ -97,9 +121,12 @@ public final class EuiccHooks {
             }
         });
 
-        hookBefore(euiccManager, "getEuiccInfo", new XC_MethodHook() {
+        hookAfter(euiccManager, "getEuiccInfo", new XC_MethodHook() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (param.getResult() != null) {
+                    return;
+                }
                 if (!ConfigManager.shouldReportEsim()) {
                     return;
                 }
@@ -259,6 +286,15 @@ public final class EuiccHooks {
         return false;
     }
 
+    public static boolean isPhysicalEuiccPackage(String packageName) {
+        for (String target : PHYSICAL_EUICC_PACKAGES) {
+            if (target.equals(packageName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void hookTelephonyManager(
             XC_LoadPackage.LoadPackageParam lpparam,
             Class<?> uiccCardInfoClass,
@@ -278,6 +314,14 @@ public final class EuiccHooks {
                 if (!ConfigManager.shouldReportEsim()) {
                     return;
                 }
+                // Never hide cards the framework already reports. This is what lets a
+                // privileged LPA (NekokoLPA2 / OpenEUICC) enumerate the user's removable
+                // eUICC and open logical channels on it through TelephonyManager.
+                Object original = invokeOriginal(param);
+                if (original instanceof List && !((List<?>) original).isEmpty()) {
+                    param.setResult(original);
+                    return;
+                }
                 Object card = createUiccCardInfo(uiccCardInfoClass, uiccPortInfoClass);
                 if (card != null) {
                     param.setResult(Collections.singletonList(card));
@@ -288,9 +332,15 @@ public final class EuiccHooks {
         hookBefore(telephonyManager, "getCardIdForDefaultEuicc", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
-                if (ConfigManager.shouldReportEsim()) {
-                    param.setResult(SYNTHETIC_CARD_ID);
+                if (!ConfigManager.shouldReportEsim()) {
+                    return;
                 }
+                Object original = invokeOriginal(param);
+                if (original instanceof Integer && (Integer) original >= 0) {
+                    param.setResult(original);
+                    return;
+                }
+                param.setResult(SYNTHETIC_CARD_ID);
             }
         });
     }
@@ -403,7 +453,26 @@ public final class EuiccHooks {
         });
     }
 
+    private static Object invokeOriginal(XC_MethodHook.MethodHookParam param) {
+        try {
+            return XposedBridge.invokeOriginalMethod(param.method, param.thisObject, param.args);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private static void hookBefore(Class<?> targetClass, String methodName, XC_MethodHook callback) {
+        if (targetClass == null) {
+            return;
+        }
+        try {
+            XposedHelpers.findAndHookMethod(targetClass, methodName, callback);
+        } catch (Throwable ignored) {
+            // Method or class is unavailable on this Android version.
+        }
+    }
+
+    private static void hookAfter(Class<?> targetClass, String methodName, XC_MethodHook callback) {
         if (targetClass == null) {
             return;
         }

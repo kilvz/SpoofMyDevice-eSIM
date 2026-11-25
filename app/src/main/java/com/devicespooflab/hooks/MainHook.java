@@ -155,18 +155,23 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": EmulatorDetectionHooks failed: " + exception.getMessage());
         }
 
-        try {
-            TelephonyHooks.hook(lpparam);
-            XposedBridge.log(TAG + ": TelephonyHooks loaded");
-        } catch (Exception exception) {
-            XposedBridge.log(TAG + ": TelephonyHooks failed: " + exception.getMessage());
-        }
+        boolean physicalEuiccApp = EuiccHooks.isPhysicalEuiccPackage(lpparam.packageName);
+        if (physicalEuiccApp) {
+            XposedBridge.log(TAG + ": Physical eUICC app detected; keeping native card, subscription and EID data");
+        } else {
+            try {
+                TelephonyHooks.hook(lpparam);
+                XposedBridge.log(TAG + ": TelephonyHooks loaded");
+            } catch (Exception exception) {
+                XposedBridge.log(TAG + ": TelephonyHooks failed: " + exception.getMessage());
+            }
 
-        try {
-            EuiccHooks.hook(lpparam);
-            XposedBridge.log(TAG + ": EuiccHooks loaded");
-        } catch (Exception exception) {
-            XposedBridge.log(TAG + ": EuiccHooks failed: " + exception.getMessage());
+            try {
+                EuiccHooks.hook(lpparam);
+                XposedBridge.log(TAG + ": EuiccHooks loaded");
+            } catch (Exception exception) {
+                XposedBridge.log(TAG + ": EuiccHooks failed: " + exception.getMessage());
+            }
         }
 
         try {

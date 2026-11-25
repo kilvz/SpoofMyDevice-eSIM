@@ -18,6 +18,7 @@ Grab the release-signed APK from the [latest release](https://github.com/kilvz/S
 - Safe Mode that keeps the real `Build.VERSION` and `ro.*.build.version.*` values for selected apps
 - Model, fingerprint, telephony, and identifier hooks remain enabled in Safe Mode
 - eSIM/eUICC reporting with automatic EID generation and NekokoLPA forwarding
+- Physical eUICC passthrough for LPA apps (NekokoLPA2, OpenEUICC, EasyEUICC)
 - Android System Framework is always excluded from hooking
 - Optional resolution, density, window metrics, and configuration spoofing
 - Locale, timezone, Build ID, and Display ID spoofing
@@ -81,6 +82,20 @@ Relevant configuration keys:
 | `device.esim_forward` | `true` | Forward `EuiccManager` provisioning requests to NekokoLPA |
 
 The profile editor exposes these as the **eSIM support** and **Forward eSIM installs to NekokoLPA** switches plus an **EID** field in the advanced section. Forwarding uses the NekokoLPA deep-link handler; both package names (`ee.nekoko.nlpa2.open` and `ee.nekoko.nlpa2`) are supported.
+
+### Physical eUICC cards
+
+The synthetic eSIM surface is a fallback: when the framework already reports a real card, subscription, EID or `EuiccManager` state, the module keeps the real value. This is required for removable eUICC cards, which the LPA must be able to enumerate and write to.
+
+SpoofMyDevice also skips telephony and eUICC spoofing for known LPA packages (`ee.nekoko.nlpa2`, `ee.nekoko.nlpa2.open`, `ee.nekoko.nbridge`, `im.angry.openeuicc`, `im.angry.easyeuicc`) so it cannot hide the card from the app that is supposed to manage it. Assigning a profile to NekokoLPA2 is therefore safe, but it will not give the app card access on its own.
+
+If the ROM has no OMAPI service (`android.se.omapi`), an unprivileged OMAPI LPA cannot see the card. NekokoLPA2 can use its privileged **Telephony (TMAPI)** reader instead:
+
+1. Install the NekokoLPA2 privileged Magisk/KernelSU module (`ee.nekoko.nlpa2-<version>.magisk.zip`) and reboot. It installs the app as a privileged app with `MODIFY_PHONE_STATE`; installing only the APK does not grant that permission.
+2. Open NekokoLPA2, go to reader settings and enable the **Telephony API** connector.
+3. Select the `TM Slot ...` reader for the slot that holds the card. Writes then go through `TelephonyManager.iccOpenLogicalChannel*` instead of OMAPI.
+
+The lighter OTBridge helper module (`otbridge-magisk-kernelsu-*.zip`) provides the same Telephony bridge to the normal app when it is available for your NekokoLPA2 release. EasyEUICC (`im.angry.easyeuicc`) is the unprivileged OMAPI build and has no Telephony fallback, so use NekokoLPA2 or the privileged OpenEUICC build on ROMs without OMAPI.
 
 ## Build From Source
 
