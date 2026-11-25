@@ -195,9 +195,7 @@ final class CardBridgeClient {
                 + " " + token;
         Log.i(TAG, "Starting card daemon: " + command);
 
-        ProcessBuilder builder = new ProcessBuilder("su", "-c", command);
-        builder.redirectErrorStream(true);
-        process = builder.start();
+        process = startRootShell(command);
 
         LinkedBlockingQueue<String> lines = new LinkedBlockingQueue<>();
         Process started = process;
@@ -249,6 +247,27 @@ final class CardBridgeClient {
                 : "the root card daemon exited";
         stopDaemon();
         throw new IOException(detail + "; grant root access to SpoofMyDevice and retry");
+    }
+
+    private static Process startRootShell(String command) throws IOException {
+        String[] candidates = {
+                "su",
+                "/system/bin/su",
+                "/system/xbin/su",
+                "/sbin/su",
+                "/debug_ramdisk/su",
+        };
+        IOException failure = null;
+        for (String candidate : candidates) {
+            try {
+                ProcessBuilder builder = new ProcessBuilder(candidate, "-c", command);
+                builder.redirectErrorStream(true);
+                return builder.start();
+            } catch (IOException exception) {
+                failure = exception;
+            }
+        }
+        throw failure != null ? failure : new IOException("su not found");
     }
 
     private void stopDaemon() {
