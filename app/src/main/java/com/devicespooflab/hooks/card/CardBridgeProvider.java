@@ -50,7 +50,9 @@ public class CardBridgeProvider extends ContentProvider {
 
     private boolean isAllowedCaller() {
         int uid = Binder.getCallingUid();
-        if (uid == Process.myUid() || uid == SHELL_UID) {
+        // Root is already omnipotent; allowing it keeps `su -c content call`
+        // diagnostics working from a terminal (shell uid is allowed too).
+        if (uid == 0 || uid == Process.myUid() || uid == SHELL_UID) {
             return true;
         }
         Context context = getContext();
