@@ -871,7 +871,20 @@ public class ConfigManager {
 
     private static synchronized String getOrCreateGeneratedEid() {
         if (generatedEid == null || generatedEid.length() != 32) {
-            generatedEid = com.devicespooflab.hooks.utils.RandomGenerator.generateEID();
+            String seed = getConfigValue("ro.serialno");
+            if (seed == null || seed.isEmpty()) {
+                seed = getConfigValue("ANDROID_ID");
+            }
+            if (seed == null || seed.isEmpty()) {
+                seed = getConfigValue(KEY_SPOOF_ICCID);
+            }
+            if (seed == null || seed.isEmpty()) {
+                seed = getConfigValue(KEY_SPOOF_IMSI);
+            }
+            if (seed == null || seed.isEmpty()) {
+                seed = getConfigValue("ro.build.fingerprint");
+            }
+            generatedEid = RandomGenerator.generateEID(seed);
         }
         return generatedEid;
     }

@@ -86,6 +86,23 @@ public class RandomGenerator {
         return eid.append(checkDigit).toString();
     }
 
+    /**
+     * Deterministic EID variant used when a profile has stable identifiers. The same seed
+     * always produces the same EID so target apps do not see it change between restarts.
+     */
+    public static String generateEID(String seed) {
+        if (seed == null || seed.isEmpty()) {
+            return generateEID();
+        }
+        java.util.Random seeded = new java.util.Random(seed.hashCode());
+        StringBuilder eid = new StringBuilder("89049032");
+        for (int i = eid.length(); i < 31; i++) {
+            eid.append(seeded.nextInt(10));
+        }
+        int checkDigit = calculateLuhnCheckDigit(eid.toString());
+        return eid.append(checkDigit).toString();
+    }
+
     public static String generateSerial() {
         String chars = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // No I or O to avoid confusion
         StringBuilder serial = new StringBuilder();
