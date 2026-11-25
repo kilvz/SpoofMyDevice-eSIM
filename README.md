@@ -83,6 +83,8 @@ Relevant configuration keys:
 
 The profile editor exposes these as the **eSIM support** and **Forward eSIM installs to NekokoLPA** switches plus an **EID** field in the advanced section. Forwarding uses the NekokoLPA deep-link handler; both package names (`ee.nekoko.nlpa2.open` and `ee.nekoko.nlpa2`) are supported.
 
+While eSIM support is on, the module covers every signal apps commonly use to detect an eSIM: the `android.hardware.telephony.euicc` and `android.hardware.telephony.euicc.mep` features (both in `hasSystemFeature()` and in `getSystemAvailableFeatures()`), `EuiccManager.isEnabled()`, `getEid()`, `getEuiccInfo()`, `getAvailableMemoryInBytes()` and `isSimPortAvailable()`, `TelephonyManager.getUiccCardsInfo()`, `SubscriptionInfo.isEmbedded()` and `Settings.Global.EUICC_PROVISIONED`. Signals evaluated server-side (Play Store device catalog, carrier entitlement APIs, Play Integrity) cannot be changed locally.
+
 ### Physical eUICC cards
 
 The synthetic eSIM surface is a fallback: when the framework already reports a real card, subscription, EID or `EuiccManager` state, the module keeps the real value. This is required for removable eUICC cards, which the LPA must be able to enumerate and write to.

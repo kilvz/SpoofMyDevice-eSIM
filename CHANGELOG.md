@@ -3,9 +3,41 @@
 Release-signed APKs are built, verified and published by GitHub Actions.
 Tags use `v<versionName>-esim.<versionCode>`.
 
-## 2.1.7 (versionCode 20)
+## 2.2.0 (versionCode 21)
 
 Latest release.
+
+### Wider eSIM detection coverage
+
+Apps use several independent signals to decide whether a phone has an eSIM.
+This release covers the remaining ones:
+
+- `PackageManager.hasSystemFeature("android.hardware.telephony.euicc")` and the
+  MEP flag `android.hardware.telephony.euicc.mep` now report `true` while eSIM
+  spoofing is on, independent of the rest of the telephony profile.
+- `PackageManager.getSystemAvailableFeatures()` now contains both eUICC
+  features even when the ROM does not declare them, so apps that enumerate the
+  feature list (instead of calling `hasSystemFeature`) see them too.
+- `TelephonyManager.getUiccCardsInfo()` now returns a synthetic embedded eUICC
+  card in addition to any real cards when no eUICC is reported, instead of only
+  when the list is completely empty. Real cards are never replaced; the
+  synthetic card gets an unused card id and physical slot.
+- `SubscriptionInfo.isEmbedded()` now reports `true` for subscriptions on an
+  eUICC slot, including profiles on a removable eUICC that Android reports as
+  non-embedded. Physical SIM subscriptions stay non-embedded.
+- `EuiccManager.getAvailableMemoryInBytes()` returns a plausible free-storage
+  value when the platform reports none.
+- `EuiccManager.isSimPortAvailable()` reports the first two ports as available
+  while spoofing, so apps that check port availability before provisioning are
+  not blocked.
+- `Settings.Global.EUICC_PROVISIONED` reads as `1`, which is what enterprise
+  and MDM stacks check for an eSIM-capable device.
+
+Note: these hooks apply to apps in the module's LSPosed scope. Signals computed
+server-side (Play Store device catalog, carrier entitlement APIs, Play
+Integrity) cannot be changed locally.
+
+## 2.1.7 (versionCode 20)
 
 ### Highlights
 

@@ -1,9 +1,12 @@
 package com.devicespooflab.hooks.hooks;
 
 import android.app.PendingIntent;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.SystemClock;
+import android.telephony.TelephonyManager;
 
 import com.devicespooflab.hooks.utils.ConfigManager;
 
@@ -11,7 +14,9 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -56,6 +61,10 @@ public final class EuiccHooks {
 
     private static final List<WeakReference<Object>> SYNTHETIC_CARDS = new ArrayList<>();
     private static final List<WeakReference<Object>> SYNTHETIC_PORTS = new ArrayList<>();
+    private static final long EUICC_SLOT_CACHE_MILLIS = 60_000L;
+
+    private static volatile int[] embeddedLogicalSlots;
+    private static volatile long embeddedLogicalSlotsAt;
 
     private EuiccHooks() {
     }
@@ -85,6 +94,8 @@ public final class EuiccHooks {
             hookUiccCardInfo(uiccCardInfo, uiccPortInfo);
         }
         hookTelephonyManager(lpparam, uiccCardInfo, uiccPortInfo);
+        hookSubscriptionInfo(lpparam);
+        hookSettingsGlobal(lpparam);
     }
 
     private static void hookEuiccManager(Class<?> euiccManager, Class<?> euiccInfoClass, String packageName) {
@@ -136,6 +147,41 @@ public final class EuiccHooks {
                 }
             }
         });
+
+        hookAfter(euiccManager, "getAvailableMemoryInBytes", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (!ConfigManager.shouldReportEsim()) {
+                    return;
+                }
+                if (param.getResult() instanceof Long && (Long) param.getResult() > 0) {
+                    return;
+                }
+                // A plausible amount of free profile storage (about 500 KB).
+                param.setResult(512_000L);
+            }
+        });
+
+        try {
+            XposedHelpers.findAndHookMethod(euiccManager, "isSimPortAvailable", int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!ConfigManager.shouldReportEsim()) {
+                                return;
+                            }
+                            if (param.getResult() instanceof Boolean
+                                    && !((Boolean) param.getResult())) {
+                                int port = (Integer) param.args[0];
+                                if (port <= 1) {
+                                    param.setResult(true);
+                                }
+                            }
+                        }
+                    });
+        } catch (Throwable ignored) {
+            // Method is unavailable on this Android version.
+        }
 
         hookDownloadSubscription(euiccManager, packageName, false);
         hookDownloadSubscription(euiccManager, packageName, true);
@@ -318,14 +364,30 @@ public final class EuiccHooks {
                 // privileged LPA (NekokoLPA2 / OpenEUICC) enumerate the user's removable
                 // eUICC and open logical channels on it through TelephonyManager.
                 Object original = invokeOriginal(param);
-                if (original instanceof List && !((List<?>) original).isEmpty()) {
+                List<?> cards = original instanceof List
+                        ? (List<?>) original
+                        : Collections.emptyList();
+                if (hasEuiccCard(cards)) {
+                    // Never hide cards the framework already reports. This is what lets a
+                    // privileged LPA (NekokoLPA2 / OpenEUICC) enumerate the user's removable
+                    // eUICC and open logical channels on it through TelephonyManager.
                     param.setResult(original);
                     return;
                 }
-                Object card = createUiccCardInfo(uiccCardInfoClass, uiccPortInfoClass);
-                if (card != null) {
-                    param.setResult(Collections.singletonList(card));
+                Object card = createUiccCardInfo(
+                        uiccCardInfoClass,
+                        uiccPortInfoClass,
+                        nextCardId(cards),
+                        freeSlot(cards)
+                );
+                if (card == null) {
+                    return;
                 }
+                // Add the synthetic eUICC next to any real cards.
+                List<Object> merged = new ArrayList<>(cards.size() + 1);
+                merged.addAll(cards);
+                merged.add(card);
+                param.setResult(merged);
             }
         });
 
@@ -354,7 +416,7 @@ public final class EuiccHooks {
         hookSyntheticGetter(uiccCardInfoClass, "isRemovable", SYNTHETIC_CARDS, () -> false);
         hookSyntheticGetter(uiccCardInfoClass, "isMultipleEnabledProfilesSupported", SYNTHETIC_CARDS, () -> false);
         hookSyntheticGetter(uiccCardInfoClass, "getPorts", SYNTHETIC_CARDS, () -> {
-            Object port = createUiccPortInfo(uiccPortInfoClass);
+            Object port = createUiccPortInfo(uiccPortInfoClass, SYNTHETIC_LOGICAL_SLOT_INDEX);
             return port == null ? Collections.emptyList() : Collections.singletonList(port);
         });
 
@@ -366,12 +428,221 @@ public final class EuiccHooks {
         }
     }
 
-    private static Object createUiccCardInfo(Class<?> cardClass, Class<?> portClass) {
+    private static boolean hasEuiccCard(List<?> cards) {
+        for (Object card : cards) {
+            if (card == null) {
+                continue;
+            }
+            try {
+                Object value = XposedHelpers.callMethod(card, "isEuicc");
+                if (value instanceof Boolean && (Boolean) value) {
+                    return true;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return false;
+    }
+
+    private static int nextCardId(List<?> cards) {
+        int max = 0;
+        for (Object card : cards) {
+            if (card == null) {
+                continue;
+            }
+            try {
+                Object value = XposedHelpers.callMethod(card, "getCardId");
+                if (value instanceof Integer) {
+                    max = Math.max(max, (Integer) value);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return Math.max(SYNTHETIC_CARD_ID, max + 1);
+    }
+
+    private static int freeSlot(List<?> cards) {
+        Set<Integer> used = new HashSet<>();
+        for (Object card : cards) {
+            if (card == null) {
+                continue;
+            }
+            try {
+                Object value = XposedHelpers.callMethod(card, "getPhysicalSlotIndex");
+                if (value instanceof Integer) {
+                    used.add((Integer) value);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        for (int slot = 0; slot < 4; slot++) {
+            if (!used.contains(slot)) {
+                return slot;
+            }
+        }
+        return used.size();
+    }
+
+    /**
+     * Marks subscriptions on an eUICC slot as embedded, including profiles on a
+     * removable eUICC, which Android reports as non-embedded.
+     */
+    private static void hookSubscriptionInfo(XC_LoadPackage.LoadPackageParam lpparam) {
+        Class<?> subscriptionInfo = XposedHelpers.findClassIfExists(
+                "android.telephony.SubscriptionInfo",
+                lpparam.classLoader
+        );
+        if (subscriptionInfo == null) {
+            return;
+        }
+        hookAfter(subscriptionInfo, "isEmbedded", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (param.getResult() instanceof Boolean && (Boolean) param.getResult()) {
+                    return;
+                }
+                if (!ConfigManager.shouldReportEsim()) {
+                    return;
+                }
+                int slot = -1;
+                try {
+                    Object value = XposedHelpers.callMethod(param.thisObject, "getSimSlotIndex");
+                    if (value instanceof Integer) {
+                        slot = (Integer) value;
+                    }
+                } catch (Throwable ignored) {
+                }
+                if (isEmbeddedSlot(slot)) {
+                    param.setResult(true);
+                }
+            }
+        });
+    }
+
+    /**
+     * Advertising the eUICC as provisioned is what enterprise/MDM stacks read via
+     * {@code Settings.Global.EUICC_PROVISIONED}.
+     */
+    private static void hookSettingsGlobal(XC_LoadPackage.LoadPackageParam lpparam) {
+        Class<?> settingsGlobal = XposedHelpers.findClassIfExists(
+                "android.provider.Settings$Global",
+                lpparam.classLoader
+        );
+        if (settingsGlobal == null) {
+            return;
+        }
+        XC_MethodHook hook = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (!ConfigManager.shouldReportEsim()) {
+                    return;
+                }
+                if (param.args.length > 1
+                        && "euicc_provisioned".equals(param.args[1])) {
+                    param.setResult(1);
+                }
+            }
+        };
+        try {
+            XposedHelpers.findAndHookMethod(settingsGlobal, "getInt",
+                    ContentResolver.class, String.class, hook);
+        } catch (Throwable ignored) {
+        }
+        try {
+            XposedHelpers.findAndHookMethod(settingsGlobal, "getInt",
+                    ContentResolver.class, String.class, int.class, hook);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isEmbeddedSlot(int logicalSlot) {
+        int[] slots = embeddedLogicalSlots;
+        long now = SystemClock.elapsedRealtime();
+        if (slots == null || now - embeddedLogicalSlotsAt > EUICC_SLOT_CACHE_MILLIS) {
+            slots = queryEuiccLogicalSlots();
+            embeddedLogicalSlots = slots;
+            embeddedLogicalSlotsAt = now;
+        }
+        if (slots.length == 0) {
+            // No card information available: still present the subscription as an eSIM.
+            return true;
+        }
+        for (int slot : slots) {
+            if (slot == logicalSlot) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Logical slot indexes backed by an eUICC, including a synthetic card. */
+    private static int[] queryEuiccLogicalSlots() {
+        Context context = ConfigManager.getAppContext();
+        if (context == null) {
+            return new int[0];
+        }
+        try {
+            TelephonyManager telephony = (TelephonyManager) context.getSystemService(
+                    Context.TELEPHONY_SERVICE
+            );
+            if (telephony == null) {
+                return new int[0];
+            }
+            List<?> cards = telephony.getUiccCardsInfo();
+            if (cards == null) {
+                return new int[0];
+            }
+            List<Integer> slots = new ArrayList<>();
+            for (Object card : cards) {
+                if (card == null) {
+                    continue;
+                }
+                Object value = XposedHelpers.callMethod(card, "isEuicc");
+                if (!(value instanceof Boolean) || !((Boolean) value)) {
+                    continue;
+                }
+                boolean synthetic = isTracked(SYNTHETIC_CARDS, card);
+                boolean added = false;
+                if (!synthetic) {
+                    try {
+                        Object ports = XposedHelpers.callMethod(card, "getPorts");
+                        if (ports instanceof List) {
+                            for (Object port : (List<?>) ports) {
+                                Object logical = XposedHelpers.callMethod(
+                                        port, "getLogicalSlotIndex");
+                                if (logical instanceof Integer) {
+                                    slots.add((Integer) logical);
+                                    added = true;
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (!added) {
+                    Object index = XposedHelpers.callMethod(card, "getPhysicalSlotIndex");
+                    if (index instanceof Integer) {
+                        slots.add((Integer) index);
+                    }
+                }
+            }
+            int[] result = new int[slots.size()];
+            for (int i = 0; i < slots.size(); i++) {
+                result[i] = slots.get(i);
+            }
+            return result;
+        } catch (Throwable ignored) {
+            return new int[0];
+        }
+    }
+
+    private static Object createUiccCardInfo(Class<?> cardClass, Class<?> portClass,
+                                             int cardId, int slotIndex) {
         if (cardClass == null) {
             return null;
         }
 
-        Object port = createUiccPortInfo(portClass);
+        Object port = createUiccPortInfo(portClass, slotIndex);
         List<Object> ports = port == null
                 ? Collections.emptyList()
                 : Collections.singletonList(port);
@@ -381,9 +652,9 @@ public final class EuiccHooks {
             card = XposedHelpers.newInstance(
                     cardClass,
                     true,
-                    SYNTHETIC_CARD_ID,
+                    cardId,
                     ConfigManager.getEid(),
-                    SYNTHETIC_PHYSICAL_SLOT_INDEX,
+                    slotIndex,
                     false,
                     false,
                     ports
@@ -399,7 +670,7 @@ public final class EuiccHooks {
         return card;
     }
 
-    private static Object createUiccPortInfo(Class<?> portClass) {
+    private static Object createUiccPortInfo(Class<?> portClass, int logicalSlotIndex) {
         if (portClass == null) {
             return null;
         }
@@ -409,7 +680,7 @@ public final class EuiccHooks {
                     portClass,
                     ConfigManager.getICCID(),
                     SYNTHETIC_PORT_INDEX,
-                    SYNTHETIC_LOGICAL_SLOT_INDEX,
+                    logicalSlotIndex,
                     true
             );
         } catch (Throwable ignored) {

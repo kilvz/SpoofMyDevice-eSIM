@@ -28,6 +28,9 @@ public class PackageManagerHooks {
         "goldfish"
     ));
 
+    private static final String FEATURE_TELEPHONY_EUICC = "android.hardware.telephony.euicc";
+    private static final String FEATURE_TELEPHONY_EUICC_MEP = "android.hardware.telephony.euicc.mep";
+
     private static final Set<String> TELEPHONY_FEATURES = new HashSet<>(Arrays.asList(
         "android.hardware.telephony",
         "android.hardware.telephony.gsm",
@@ -126,6 +129,11 @@ public class PackageManagerHooks {
                             }
                         }
 
+                        if (ConfigManager.shouldReportEsim()) {
+                            addFeatureIfMissing(filtered, featureInfoClass, FEATURE_TELEPHONY_EUICC);
+                            addFeatureIfMissing(filtered, featureInfoClass, FEATURE_TELEPHONY_EUICC_MEP);
+                        }
+
                         Object typedArray = Array.newInstance(featureInfoClass, filtered.size());
                         for (int index = 0; index < filtered.size(); index++) {
                             Array.set(typedArray, index, filtered.get(index));
@@ -138,6 +146,27 @@ public class PackageManagerHooks {
         }
     }
 
+    private static void addFeatureIfMissing(List<Object> features, Class<?> featureInfoClass,
+                                            String name) {
+        for (Object feature : features) {
+            try {
+                if (name.equals(XposedHelpers.getObjectField(feature, "name"))) {
+                    return;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            Object info = featureInfoClass.getConstructor().newInstance();
+            XposedHelpers.setObjectField(info, "name", name);
+            XposedHelpers.setIntField(info, "version", 1);
+            features.add(info);
+        } catch (Throwable throwable) {
+            XposedBridge.log(TAG + ": Failed to advertise feature " + name + ": "
+                    + throwable.getMessage());
+        }
+    }
+
     private static Boolean overrideFeature(String featureName) {
         String normalized = featureName.toLowerCase(Locale.US);
 
@@ -145,6 +174,15 @@ public class PackageManagerHooks {
             if (normalized.contains(denied.toLowerCase(Locale.US))) {
                 return false;
             }
+        }
+
+        // eSIM support is its own switch: an eSIM profile must advertise the
+        // eUICC features even when the rest of the telephony profile is off.
+        if (FEATURE_TELEPHONY_EUICC.equals(featureName)) {
+            return ConfigManager.shouldReportEsim() || ConfigManager.shouldExposeTelephony();
+        }
+        if (FEATURE_TELEPHONY_EUICC_MEP.equals(featureName)) {
+            return ConfigManager.shouldReportEsim();
         }
 
         if (TELEPHONY_FEATURES.contains(featureName)) {
