@@ -130,8 +130,9 @@ public class DevicePresetCatalog {
         profile.setLocale(Locale.getDefault().toLanguageTag());
         profile.setUserAgent(buildDefaultUserAgent(profile));
         profile.setBootloader(Build.BOOTLOADER);
-        profile.setCpuAbi(Build.CPU_ABI);
-        profile.setCpuAbiList(joinAbis(Build.SUPPORTED_ABIS));
+        String[] supportedAbis = Build.SUPPORTED_ABIS;
+        profile.setCpuAbi(supportedAbis.length > 0 ? supportedAbis[0] : "");
+        profile.setCpuAbiList(joinAbis(supportedAbis));
         profile.setCpuAbiList64(joinAbis(Build.SUPPORTED_64_BIT_ABIS));
         profile.setCpuAbiList32(joinAbis(Build.SUPPORTED_32_BIT_ABIS));
         profile.setSocModel(readBuildField("SOC_MODEL"));
