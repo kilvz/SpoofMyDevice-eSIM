@@ -38,6 +38,8 @@ public final class CardBridge {
                     return client.transmitBasic(extras);
                 case "closeLogicalChannel":
                     return client.closeLogicalChannel(extras);
+                case "probe":
+                    return client.probe(extras);
                 case "ping":
                 case "start":
                 case "diag":

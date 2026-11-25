@@ -110,6 +110,13 @@ final class CardBridgeClient {
         return toBundle(request("diag", new JSONObject()));
     }
 
+    Bundle probe(Bundle extras) throws Exception {
+        JSONObject request = new JSONObject();
+        request.put("slot", extras == null ? 0 : extras.getInt("slot", 0));
+        request.put("port", extras == null ? 0 : extras.getInt("port", 0));
+        return toBundle(request("probe", request));
+    }
+
     // --- daemon lifecycle -----------------------------------------------------
 
     private synchronized JSONObject request(String op, JSONObject arguments) throws Exception {
@@ -213,11 +220,13 @@ final class CardBridgeClient {
         pump.start();
 
         long deadline = System.currentTimeMillis() + START_TIMEOUT_MS;
+        StringBuilder output = new StringBuilder();
         while (System.currentTimeMillis() < deadline) {
             String line = lines.poll(500, TimeUnit.MILLISECONDS);
             if (line == null) {
                 continue;
             }
+            output.append(line).append(' ');
             if (line.startsWith("READY ")) {
                 port = Integer.parseInt(line.substring("READY ".length()).trim());
                 saveState();
@@ -246,7 +255,10 @@ final class CardBridgeClient {
                 ? "timed out waiting for the root card daemon"
                 : "the root card daemon exited";
         stopDaemon();
-        throw new IOException(detail + "; grant root access to SpoofMyDevice and retry");
+        String tail = output.toString().trim();
+        throw new IOException(detail
+                + (tail.isEmpty() ? "" : ": " + tail)
+                + "; grant root access to SpoofMyDevice and retry");
     }
 
     private static Process startRootShell(String command) throws IOException {

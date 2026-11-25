@@ -164,6 +164,8 @@ public final class CardDaemon {
                         request.getString("apdu"));
             case "close":
                 return closeLogicalChannel(request.getString("connectionId"));
+            case "probe":
+                return probe(request.optInt("slot", 0), request.optInt("port", 0));
             default:
                 return error("NOT_IMPLEMENTED", "Unknown operation " + op);
         }
@@ -355,6 +357,17 @@ public final class CardDaemon {
             }
             return ok().put("responseApdu", response);
         }
+    }
+
+    private static JSONObject probe(int slot, int port) throws Exception {
+        JSONArray aids = new JSONArray();
+        aids.put("A0000005591010FFFFFFFF8900000100");
+        JSONObject result = openLogicalChannel(slot, port, aids);
+        String connectionId = result.optString("connectionId", "");
+        if (!connectionId.isEmpty()) {
+            closeLogicalChannel(connectionId);
+        }
+        return result;
     }
 
     private static JSONObject closeLogicalChannel(String connectionId) {
