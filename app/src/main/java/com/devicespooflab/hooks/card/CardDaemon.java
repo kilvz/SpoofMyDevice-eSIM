@@ -16,6 +16,7 @@ import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
@@ -53,18 +54,25 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class CardDaemon {
 
     static final String TAG = "SpoofMyDeviceCard";
+    /**
+     * Bumped whenever the wire behaviour changes, so a client never keeps
+     * talking to a daemon left over from an older APK.
+     */
+    static final int DAEMON_VERSION = 2;
     static final String STATE_FILE = "nbridge-daemon.properties";
     static final String LOG_FILE = "/data/local/tmp/spoofmydevice-cardd.log";
+    private static final String CHANNEL_REQUEST_CLASS =
+            "com.android.internal.telephony.IccLogicalChannelRequest";
 
     private static final Object CARD_LOCK = new Object();
     private static final Map<String, Connection> CONNECTIONS = new ConcurrentHashMap<>();
-    private static final Set<String> TERMINAL_CAPABILITIES_SENT = new HashSet<>();
 
     private static TelephonyManager telephony;
     private static Object telephonyService;
     private static Class<?> telephonyServiceClass;
     private static Context systemContext;
     private static String token = "";
+    private static String modulePackage = "android";
 
     private CardDaemon() {
     }
@@ -72,6 +80,9 @@ public final class CardDaemon {
     public static void main(String[] args) {
         try {
             token = args.length > 0 ? args[0] : "";
+            if (args.length > 1 && !args[1].isEmpty()) {
+                modulePackage = args[1];
+            }
             try {
                 Looper.prepareMainLooper();
             } catch (Throwable ignored) {
@@ -146,7 +157,8 @@ public final class CardDaemon {
             case "ping":
                 return ok().put("uid", android.os.Process.myUid())
                         .put("pid", android.os.Process.myPid())
-                        .put("sdk", Build.VERSION.SDK_INT);
+                        .put("sdk", Build.VERSION.SDK_INT)
+                        .put("daemon", DAEMON_VERSION);
             case "diag":
                 return diagnostics();
             case "listSlots":
@@ -253,6 +265,7 @@ public final class CardDaemon {
         JSONObject result = ok();
         result.put("uid", android.os.Process.myUid());
         result.put("sdk", Build.VERSION.SDK_INT);
+        result.put("daemon", DAEMON_VERSION);
         result.put("device", Build.DEVICE);
         result.put("model", Build.MODEL);
         result.put("activeModemCount", activeModemCount());
@@ -310,8 +323,6 @@ public final class CardDaemon {
             return error("NO_AID", "No AID supplied");
         }
         synchronized (CARD_LOCK) {
-            sendTerminalCapabilities(slot, port);
-
             Exception last = null;
             int lastStatus = -1;
             for (int i = 0; i < aids.length(); i++) {
@@ -405,20 +416,6 @@ public final class CardDaemon {
         return ok();
     }
 
-    private static void sendTerminalCapabilities(int slot, int port) {
-        String key = slot + ":" + port;
-        if (!TERMINAL_CAPABILITIES_SENT.add(key)) {
-            return;
-        }
-        try {
-            // UICC TERMINAL PROFILE. Harmless when the card does not use it.
-            Apdu apdu = new Apdu(0x80, 0xAA, 0x00, 0x00, 10, "a9088100820101830107");
-            transmitBasic(slot, port, apdu);
-        } catch (Throwable throwable) {
-            log("terminal capabilities ignored: " + readable(throwable));
-        }
-    }
-
     // --- telephony reflection -------------------------------------------------
 
     /**
@@ -506,6 +503,10 @@ public final class CardDaemon {
             if (method == null) {
                 throw new NoSuchMethodException("No ICC logical channel API on "
                         + owner.getSimpleName());
+            }
+            if (isChannelRequest(method)) {
+                return invoke(target, method,
+                        new Object[]{channelRequest(slot, port, -1, aid)});
             }
             Object[] args = openArgs(method, slot, port, aid);
             if (args == null) {
@@ -608,6 +609,11 @@ public final class CardDaemon {
                 return new Object[]{channel,
                         apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
             }
+            if (t.length == 8 && t[0] == int.class && t[1] == int.class) {
+                // Android 15: (int subId, int channel, ...). -1 selects the default phone.
+                return new Object[]{-1, channel,
+                        apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
+            }
             if (t.length == 8 && t[0] == String.class) {
                 return new Object[]{"android", channel,
                         apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
@@ -628,6 +634,10 @@ public final class CardDaemon {
                 return new Object[]{port,
                         apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
             }
+            if (t.length == 9 && t[1] == int.class && t[2] == String.class) {
+                return new Object[]{slot, port, opPackageName(),
+                        apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
+            }
             if (t.length == 8 && t[1] == String.class) {
                 return new Object[]{slot, "android",
                         apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
@@ -646,6 +656,11 @@ public final class CardDaemon {
         if ("iccTransmitApduBasicChannel".equals(name)) {
             if (t.length == 6) {
                 return new Object[]{
+                        apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
+            }
+            if (t.length == 8 && t[0] == int.class && t[1] == String.class) {
+                // Android 15: (int subId, String callingPackage, ...).
+                return new Object[]{-1, opPackageName(),
                         apdu.cla, apdu.ins, apdu.p1, apdu.p2, apdu.p3, apdu.data};
             }
             if (t.length == 7 && t[0] == String.class) {
@@ -682,6 +697,10 @@ public final class CardDaemon {
             if (method == null) {
                 throw new NoSuchMethodException("No ICC close API on "
                         + owner.getSimpleName());
+            }
+            if (isChannelRequest(method)) {
+                return invoke(target, method,
+                        new Object[]{channelRequest(slot, port, channel, null)});
             }
             Class<?>[] types = method.getParameterTypes();
             Object[] args = null;
@@ -731,6 +750,50 @@ public final class CardDaemon {
         }
     }
 
+    private static boolean isChannelRequest(Method method) {
+        Class<?>[] types = method.getParameterTypes();
+        return types.length == 1 && types[0].getName().endsWith("IccLogicalChannelRequest");
+    }
+
+    /**
+     * Builds the {@code IccLogicalChannelRequest} that Android 15's telephony
+     * AIDL expects instead of the old slot/port arguments. The class is
+     * generated from AIDL with public fields, so reflection is enough.
+     */
+    private static Object channelRequest(int slot, int port, int channel, String aid)
+            throws Exception {
+        Object request = Class.forName(CHANNEL_REQUEST_CLASS).getConstructor().newInstance();
+        setField(request, "subId", -1);
+        setField(request, "slotIndex", slot);
+        setField(request, "portIndex", port);
+        setField(request, "channel", channel);
+        if (aid != null) {
+            // Android 15's phone service only lets the default privileged LPA
+            // (the best EuiccService component) open the ISD-R applet, and it
+            // gates on a case-sensitive string compare. AIDs are binary, so a
+            // lower-case spelling selects the same applet and skips that gate;
+            // the caller still sees the AID it asked for.
+            setField(request, "aid", aid.toLowerCase(Locale.US));
+            setField(request, "p2", 0);
+            setField(request, "callingPackage", opPackageName());
+            setField(request, "binder", new android.os.Binder());
+        }
+        return request;
+    }
+
+    private static void setField(Object target, String name, Object value) {
+        try {
+            Field field = target.getClass().getField(name);
+            field.set(target, value);
+        } catch (Throwable throwable) {
+            log("channel request field " + name + " unavailable: " + readable(throwable));
+        }
+    }
+
+    private static String opPackageName() {
+        return modulePackage;
+    }
+
     // --- slot metadata --------------------------------------------------------
 
     private static int activeModemCount() {
@@ -764,36 +827,71 @@ public final class CardDaemon {
         }
     }
 
-    private static Map<Integer, Integer> readSlotCardStates() {
-        Map<Integer, Integer> result = new HashMap<>();
+    /** {@code UiccSlotInfo[]} from the phone service, falling back to the manager. */
+    private static Object uiccSlotsInfo() {
         try {
-            Method method = TelephonyManager.class.getMethod("getUiccSlotsInfo");
-            Object value = method.invoke(telephony);
-            if (value instanceof Object[]) {
-                Object[] slots = (Object[]) value;
-                for (int i = 0; i < slots.length; i++) {
-                    Object slot = slots[i];
-                    if (slot == null) {
-                        continue;
-                    }
-                    Integer state = intMethod(slot, "getCardStateInfo");
-                    if (state != null) {
-                        result.put(i, state);
-                    }
-                }
+            Method method = telephonyServiceClass().getMethod("getUiccSlotsInfo", String.class);
+            Object value = invoke(telephonyService(), method, new Object[]{opPackageName()});
+            if (value != null) {
+                return value;
             }
         } catch (Throwable throwable) {
+            log("ITelephony getUiccSlotsInfo failed: " + readable(throwable));
+        }
+        try {
+            Method method = TelephonyManager.class.getMethod("getUiccSlotsInfo");
+            return method.invoke(telephony);
+        } catch (Throwable throwable) {
             log("getUiccSlotsInfo unavailable: " + readable(throwable));
+            return null;
+        }
+    }
+
+    /** {@code List<UiccCardInfo>} from the phone service, falling back to the manager. */
+    private static Object uiccCardsInfo() {
+        try {
+            Method method = telephonyServiceClass().getMethod("getUiccCardsInfo", String.class);
+            Object value = invoke(telephonyService(), method, new Object[]{opPackageName()});
+            if (value != null) {
+                return value;
+            }
+        } catch (Throwable throwable) {
+            log("ITelephony getUiccCardsInfo failed: " + readable(throwable));
+        }
+        try {
+            Method method = TelephonyManager.class.getMethod("getUiccCardsInfo");
+            return method.invoke(telephony);
+        } catch (Throwable throwable) {
+            log("getUiccCardsInfo unavailable: " + readable(throwable));
+            return null;
+        }
+    }
+
+    private static Map<Integer, Integer> readSlotCardStates() {
+        Map<Integer, Integer> result = new HashMap<>();
+        Object value = uiccSlotsInfo();
+        if (value instanceof Object[]) {
+            Object[] slots = (Object[]) value;
+            for (int i = 0; i < slots.length; i++) {
+                Object slot = slots[i];
+                if (slot == null) {
+                    continue;
+                }
+                Integer state = intMethod(slot, "getCardStateInfo");
+                if (state != null) {
+                    result.put(i, state);
+                }
+            }
         }
         return result;
     }
 
     private static List<CardSnapshot> readCards() {
         List<CardSnapshot> result = new ArrayList<>();
-        try {
-            Method method = TelephonyManager.class.getMethod("getUiccCardsInfo");
-            Object value = method.invoke(telephony);
+        {
+            Object value = uiccCardsInfo();
             if (!(value instanceof Collection)) {
+                log("cards=0");
                 return result;
             }
             for (Object card : (Collection<?>) value) {
@@ -830,8 +928,6 @@ public final class CardDaemon {
                 }
                 result.add(snapshot);
             }
-        } catch (Throwable throwable) {
-            log("getUiccCardsInfo unavailable: " + readable(throwable));
         }
         log("cards=" + result.size());
         return result;

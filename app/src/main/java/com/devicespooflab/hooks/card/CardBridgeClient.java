@@ -182,9 +182,32 @@ final class CardBridgeClient {
             JSONObject request = new JSONObject();
             request.put("op", "ping");
             request.put("token", token);
-            return send(request).optBoolean("ok", false);
+            JSONObject response = send(request);
+            if (!response.optBoolean("ok", false)) {
+                return false;
+            }
+            if (response.optInt("daemon", 0) != CardDaemon.DAEMON_VERSION) {
+                // A daemon from an older APK is still running; stop it so the
+                // new code is used.
+                killDaemon(response.optInt("pid", 0));
+                port = 0;
+                token = null;
+                return false;
+            }
+            return true;
         } catch (Throwable ignored) {
             return false;
+        }
+    }
+
+    private void killDaemon(int pid) {
+        if (pid <= 0) {
+            return;
+        }
+        try {
+            Process killer = startRootShell("kill -9 " + pid);
+            killer.waitFor(3, TimeUnit.SECONDS);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -199,7 +222,8 @@ final class CardBridgeClient {
         String command = "CLASSPATH=" + shellQuote(moduleApkPath())
                 + " /system/bin/app_process / "
                 + CardDaemon.class.getName()
-                + " " + token;
+                + " " + token
+                + " " + shellQuote(context.getPackageName());
         Log.i(TAG, "Starting card daemon: " + command);
 
         process = startRootShell(command);
