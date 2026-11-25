@@ -62,7 +62,7 @@ public final class CardDaemon {
      * Bumped whenever the wire behaviour changes, so a client never keeps
      * talking to a daemon left over from an older APK.
      */
-    static final int DAEMON_VERSION = 4;
+    static final int DAEMON_VERSION = 5;
     static final String STATE_FILE = "nbridge-daemon.properties";
     static final String LOG_FILE = "/data/local/tmp/spoofmydevice-cardd.log";
     private static final String CHANNEL_REQUEST_CLASS =
@@ -239,12 +239,20 @@ public final class CardDaemon {
             }
         }
 
-        // Even when UiccCardInfo is unavailable, expose every modem slot so a
-        // removable eUICC the ROM failed to classify can still be tried.
+        // When UiccCardInfo is unavailable, expose every modem slot so a
+        // removable eUICC the ROM failed to classify can still be tried. When
+        // it works, only add a slot the slot info still reports as occupied;
+        // an empty slot should not become a reader that always fails.
         for (int slot = 0; slot < modemCount; slot++) {
-            if (!emitted.contains(slot + ":0") && !hidden.contains(slot)) {
-                slots.put(slotJson(slot, 0, null, cardStates, modemCount));
+            if (emitted.contains(slot + ":0") || hidden.contains(slot)) {
+                continue;
             }
+            Integer state = cardStates.get(slot);
+            boolean occupied = state != null && state.intValue() != 1;
+            if (!cards.isEmpty() && !occupied) {
+                continue;
+            }
+            slots.put(slotJson(slot, 0, null, cardStates, modemCount));
         }
         if (slots.length() == 0) {
             slots.put(slotJson(0, 0, null, cardStates, modemCount));

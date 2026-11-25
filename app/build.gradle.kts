@@ -12,8 +12,8 @@ android {
         applicationId = "com.spoofmydevice"
         minSdk = 26
         targetSdk = 37
-        versionCode = 19
-        versionName = "2.1.6"
+        versionCode = 20
+        versionName = "2.1.7"
     }
 
     signingConfigs {
