@@ -111,7 +111,7 @@ How it works:
 Setup:
 
 1. Install this APK and keep it installed (the Xposed module already is).
-2. Open NekokoLPA2 and refresh the reader list. When the root prompt appears, grant root to **SpoofMyDevice** and keep it granted.
+2. Open NekokoLPA2 and refresh the reader list. When the root prompt appears, grant root to **SpoofMyDevice** and keep it granted. Only slots the framework reports as eUICCs are listed once one is detected, so a normal SIM slot does not show up as a failing reader.
 3. Select the `T-SIM1` (or `T-SIM<n>`) reader. It is the root bridge; `T-SIM1p0` style names appear on multi-port cards.
 4. If the reader is missing, make sure no other NBridge helper owns the authority. Uninstall/disable OTBridge if it is installed, or add NekokoLPA2 to the SpoofMyDevice LSPosed scope so the module can intercept NBridge calls directly.
 

@@ -62,13 +62,14 @@ public final class CardDaemon {
      * Bumped whenever the wire behaviour changes, so a client never keeps
      * talking to a daemon left over from an older APK.
      */
-    static final int DAEMON_VERSION = 3;
+    static final int DAEMON_VERSION = 4;
     static final String STATE_FILE = "nbridge-daemon.properties";
     static final String LOG_FILE = "/data/local/tmp/spoofmydevice-cardd.log";
     private static final String CHANNEL_REQUEST_CLASS =
             "com.android.internal.telephony.IccLogicalChannelRequest";
     /** {@code IccOpenLogicalChannelResponse.STATUS_NO_ERROR}. */
     private static final int STATUS_NO_ERROR = 1;
+    private static final int STATUS_NO_SUCH_ELEMENT = 3;
     private static final String ISDR_AID = "A0000005591010FFFFFFFF8900000100";
     private static volatile String bestEuiccPackage;
     private static final int EUICC_QUERY_FLAGS = PackageManager.MATCH_SYSTEM_ONLY
@@ -206,8 +207,27 @@ public final class CardDaemon {
         Map<Integer, Integer> cardStates = readSlotCardStates();
         List<CardSnapshot> cards = readCards();
 
+        // NekokoLPA2 only manages eUICCs. Exposing a normal SIM slot makes it
+        // probe a card that cannot answer, which surfaces as a failed reader.
+        // Only filter once at least one slot is known to be an eUICC, so a ROM
+        // that misclassifies a removable eUICC still gets every slot listed.
+        Set<Integer> hidden = new HashSet<>();
+        boolean anyEuicc = false;
+        for (CardSnapshot card : cards) {
+            anyEuicc |= card.isEuicc;
+        }
+        if (anyEuicc) {
+            for (CardSnapshot card : cards) {
+                if (!card.isEuicc) {
+                    hidden.add(card.slotIndex);
+                }
+            }
+        }
         Set<String> emitted = new HashSet<>();
         for (CardSnapshot card : cards) {
+            if (hidden.contains(card.slotIndex)) {
+                continue;
+            }
             if (card.ports.isEmpty()) {
                 slots.put(slotJson(card.slotIndex, 0, card, cardStates, modemCount));
                 emitted.add(card.slotIndex + ":0");
@@ -222,7 +242,7 @@ public final class CardDaemon {
         // Even when UiccCardInfo is unavailable, expose every modem slot so a
         // removable eUICC the ROM failed to classify can still be tried.
         for (int slot = 0; slot < modemCount; slot++) {
-            if (!emitted.contains(slot + ":0")) {
+            if (!emitted.contains(slot + ":0") && !hidden.contains(slot)) {
                 slots.put(slotJson(slot, 0, null, cardStates, modemCount));
             }
         }
@@ -633,24 +653,33 @@ public final class CardDaemon {
                         + owner.getSimpleName());
             }
             if (isChannelRequest(method)) {
+                int lastStatus = -1;
                 for (String spelling : spellings(aid)) {
                     String callingPackage = opPackageName();
                     if (ISDR_AID.equals(spelling)) {
                         String best = bestEuiccPackage();
-                        if (best != null) {
-                            callingPackage = best;
+                        if (best == null) {
+                            // Without a privileged LPA the phone service always
+                            // refuses this exact spelling, so do not try it.
+                            continue;
                         }
+                        callingPackage = best;
                     }
                     Object response = invoke(target, method,
                             new Object[]{channelRequest(slot, port, -1, spelling, -1,
                                     callingPackage)});
                     int status = responseInt(response, "getStatus", -1);
                     int channel = responseInt(response, "getChannel", -1);
+                    lastStatus = status;
                     if (status == STATUS_NO_ERROR && channel > 0) {
                         return response;
                     }
+                    if (status == STATUS_NO_SUCH_ELEMENT) {
+                        // The applet is not on this card; case cannot change that.
+                        break;
+                    }
                 }
-                throw new IllegalArgumentException("Every AID spelling failed");
+                throw new IllegalArgumentException("No channel (last status " + lastStatus + ")");
             }
             Object[] args = openArgs(method, slot, port, aid);
             if (args == null) {
