@@ -61,7 +61,8 @@ public class MainHook implements IXposedHookLoadPackage {
             return;
         }
 
-        if ("ee.nekoko.nlpa2".equals(lpparam.packageName)) {
+        if ("ee.nekoko.nlpa2".equals(lpparam.packageName)
+                || "ee.nekoko.nlpa2.open".equals(lpparam.packageName)) {
             try {
                 com.devicespooflab.hooks.card.NekokoBridgeHooks.hook(lpparam);
             } catch (Throwable throwable) {

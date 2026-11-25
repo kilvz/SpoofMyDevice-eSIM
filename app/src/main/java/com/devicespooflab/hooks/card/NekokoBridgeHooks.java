@@ -26,12 +26,14 @@ public final class NekokoBridgeHooks {
 
     private static final String TAG = "SpoofMyDevice";
     private static final String PACKAGE = "ee.nekoko.nlpa2";
+    private static final String OPEN_PACKAGE = "ee.nekoko.nlpa2.open";
 
     private NekokoBridgeHooks() {
     }
 
     public static void hook(XC_LoadPackage.LoadPackageParam loadPackageParam) {
-        if (!PACKAGE.equals(loadPackageParam.packageName)) {
+        if (!PACKAGE.equals(loadPackageParam.packageName)
+                && !OPEN_PACKAGE.equals(loadPackageParam.packageName)) {
             return;
         }
 

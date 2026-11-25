@@ -99,7 +99,7 @@ The lighter OTBridge helper module (`otbridge-magisk-kernelsu-*.zip`) provides t
 
 ### Built-in NekokoLPA2 root bridge (ROMs without OMAPI or TMAPI)
 
-SpoofMyDevice also ships its own NBridge provider. NekokoLPA2 already knows how to use an external `content://ee.nekoko.nbridge.provider` helper, so the module can answer that protocol from a small daemon running as root. This works even when the ROM has no `android.se.omapi` service, no secure-element HAL, and no privileged `MODIFY_PHONE_STATE` grant for the NekokoLPA2 app.
+SpoofMyDevice also ships its own NBridge provider for both the normal (`ee.nekoko.nlpa2.open`) and privileged (`ee.nekoko.nlpa2`) NekokoLPA2 builds. NekokoLPA2 already knows how to use an external `content://ee.nekoko.nbridge.provider` helper, so the module can answer that protocol from a small daemon running as root. This works even when the ROM has no `android.se.omapi` service, no secure-element HAL, and no privileged `MODIFY_PHONE_STATE` grant for the NekokoLPA2 app.
 
 How it works:
 
@@ -126,7 +126,7 @@ adb shell su -c 'cat /data/local/tmp/spoofmydevice-cardd.log'
 
 The first command starts the daemon and prints the detected slots, card states and the telephony methods the ROM exposes. The second shows the channel-open and APDU log.
 
-The provider accepts calls only from `ee.nekoko.nlpa2`, `ee.nekoko.nbridge`, the shell user, and SpoofMyDevice itself. Other apps cannot use it to reach the card.
+The provider accepts calls only from `ee.nekoko.nlpa2`, `ee.nekoko.nlpa2.open`, `ee.nekoko.nbridge`, the shell user, and SpoofMyDevice itself. Other apps cannot use it to reach the card.
 
 ## Build From Source
 

@@ -29,6 +29,7 @@ public class CardBridgeProvider extends ContentProvider {
 
     private static final String TAG = "SpoofMyDeviceCard";
     private static final String LPA_PACKAGE = "ee.nekoko.nlpa2";
+    private static final String LPA_OPEN_PACKAGE = "ee.nekoko.nlpa2.open";
     private static final String BRIDGE_PACKAGE = "ee.nekoko.nbridge";
     private static final int SHELL_UID = 2000;
 
@@ -60,7 +61,9 @@ public class CardBridgeProvider extends ContentProvider {
             String[] packages = context.getPackageManager().getPackagesForUid(uid);
             if (packages != null) {
                 for (String packageName : packages) {
-                    if (LPA_PACKAGE.equals(packageName) || BRIDGE_PACKAGE.equals(packageName)) {
+                    if (LPA_PACKAGE.equals(packageName)
+                            || LPA_OPEN_PACKAGE.equals(packageName)
+                            || BRIDGE_PACKAGE.equals(packageName)) {
                         return true;
                     }
                 }
