@@ -1,6 +1,5 @@
 package com.devicespooflab.hooks.card;
 
-import android.app.ActivityThread;
 import android.content.Context;
 import android.os.Build;
 import android.os.Looper;
