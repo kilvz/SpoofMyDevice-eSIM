@@ -59,11 +59,79 @@ jobs:
       - name: Verify APK signature
         run: |
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -n 1)"
-          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk
+          mkdir -p dist
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk | tee dist/signature.txt
+          cp app/build/outputs/apk/release/*.apk dist/
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: SpoofMyDevice-eSIM-release
-          path: app/build/outputs/apk/release/*.apk
+          path: dist/*
           if-no-files-found: error
+
+  release:
+    name: Publish signed release
+    needs: build
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download APK
+        uses: actions/download-artifact@v8
+        with:
+          name: SpoofMyDevice-eSIM-release
+          path: dist
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          VERSION_NAME="$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n1)"
+          VERSION_CODE="$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts | head -n1)"
+
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v${VERSION_NAME}-esim.${VERSION_CODE}"
+          fi
+
+          APK="SpoofMyDevice-eSIM-${VERSION_NAME}-signed.apk"
+          mv dist/*.apk "dist/${APK}"
+          SHA256="$(sha256sum "dist/${APK}" | awk '{print $1}')"
+          CERT_SHA256="$(grep -m1 'certificate SHA-256 digest' dist/signature.txt | awk '{print $NF}' || true)"
+
+          cat > release-notes.md <<EOF
+          Release-signed APK built, verified and signed in GitHub Actions.
+
+          - Version: \`${VERSION_NAME}\` (\`${VERSION_CODE}\`)
+          - SHA-256: \`${SHA256}\`
+          - Signing certificate SHA-256: \`${CERT_SHA256}\`
+          - Commit: \`${GITHUB_SHA}\`
+
+          ### eSIM / physical eUICC
+
+          - Real framework card, subscription, EID and \`EuiccManager\` state are preserved when present.
+          - Telephony and eUICC spoofing is skipped for LPA packages so the module cannot hide a removable card.
+          - Use NekokoLPA2's privileged Telephony (TMAPI) reader on ROMs without OMAPI.
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/${APK}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "SpoofMyDevice ${VERSION_NAME} eSIM (signed)" \
+              --notes-file release-notes.md
+          else
+            gh release create "$TAG" "dist/${APK}" --repo "$GITHUB_REPOSITORY" \
+              --title "SpoofMyDevice ${VERSION_NAME} eSIM (signed)" \
+              --notes-file release-notes.md
+          fi
+          echo "Published $TAG"
