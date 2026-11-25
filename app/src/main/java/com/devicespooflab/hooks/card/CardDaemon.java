@@ -1,6 +1,10 @@
 package com.devicespooflab.hooks.card;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.Looper;
@@ -63,6 +67,12 @@ public final class CardDaemon {
     static final String LOG_FILE = "/data/local/tmp/spoofmydevice-cardd.log";
     private static final String CHANNEL_REQUEST_CLASS =
             "com.android.internal.telephony.IccLogicalChannelRequest";
+    /** {@code IccOpenLogicalChannelResponse.STATUS_NO_ERROR}. */
+    private static final int STATUS_NO_ERROR = 1;
+    private static final String ISDR_AID = "A0000005591010FFFFFFFF8900000100";
+    private static volatile String bestEuiccPackage;
+    private static final int EUICC_QUERY_FLAGS = PackageManager.MATCH_SYSTEM_ONLY
+            | PackageManager.MATCH_DIRECT_BOOT_AUTO | PackageManager.GET_RESOLVED_FILTER;
 
     private static final Object CARD_LOCK = new Object();
     private static final Map<String, Connection> CONNECTIONS = new ConcurrentHashMap<>();
@@ -181,6 +191,8 @@ public final class CardDaemon {
                 return closeLogicalChannel(request.getString("connectionId"));
             case "probe":
                 return probe(request.optInt("slot", 0), request.optInt("port", 0));
+            case "experiment":
+                return experiment(request);
             default:
                 return error("NOT_IMPLEMENTED", "Unknown operation " + op);
         }
@@ -261,6 +273,44 @@ public final class CardDaemon {
         return json;
     }
 
+    /** Mirrors {@code EuiccConnector.findBestComponent} for diagnostics. */
+    private static String bestEuiccPackage() {
+        String cached = bestEuiccPackage;
+        if (cached != null) {
+            return cached.isEmpty() ? null : cached;
+        }
+        String best = "";
+        try {
+            PackageManager manager = systemContext.getPackageManager();
+            Intent intent = new Intent("android.service.euicc.EuiccService");
+            List<ResolveInfo> services = manager.queryIntentServices(intent, EUICC_QUERY_FLAGS);
+            int bestPriority = Integer.MIN_VALUE;
+            for (ResolveInfo resolve : services) {
+                ServiceInfo service = resolve.serviceInfo;
+                if (service == null) {
+                    continue;
+                }
+                if (manager.checkPermission(
+                        "android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS",
+                        service.packageName) != PackageManager.PERMISSION_GRANTED) {
+                    continue;
+                }
+                if (!"android.permission.BIND_EUICC_SERVICE".equals(service.permission)) {
+                    continue;
+                }
+                int priority = resolve.filter != null ? resolve.filter.getPriority() : 0;
+                if (priority > bestPriority) {
+                    bestPriority = priority;
+                    best = service.packageName;
+                }
+            }
+        } catch (Throwable throwable) {
+            log("EuiccService query failed: " + readable(throwable));
+        }
+        bestEuiccPackage = best;
+        return best.isEmpty() ? null : best;
+    }
+
     private static JSONObject diagnostics() throws Exception {
         JSONObject result = ok();
         result.put("uid", android.os.Process.myUid());
@@ -301,6 +351,35 @@ public final class CardDaemon {
             binder.put("error", readable(throwable));
         }
         result.put("itelephony", binder);
+
+        JSONObject euicc = new JSONObject();
+        euicc.put("bestPackage", bestEuiccPackage());
+        try {
+            PackageManager manager = systemContext.getPackageManager();
+            Intent intent = new Intent("android.service.euicc.EuiccService");
+            JSONArray components = new JSONArray();
+            for (ResolveInfo resolve : manager.queryIntentServices(intent, EUICC_QUERY_FLAGS)) {
+                ServiceInfo service = resolve.serviceInfo;
+                if (service == null) {
+                    continue;
+                }
+                JSONObject component = new JSONObject();
+                component.put("package", service.packageName);
+                component.put("name", service.name);
+                component.put("priority",
+                        resolve.filter != null ? resolve.filter.getPriority() : -1);
+                component.put("writeEmbedded", manager.checkPermission(
+                        "android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS",
+                        service.packageName) == PackageManager.PERMISSION_GRANTED);
+                component.put("bindEuicc",
+                        "android.permission.BIND_EUICC_SERVICE".equals(service.permission));
+                components.put(component);
+            }
+            euicc.put("components", components);
+        } catch (Throwable throwable) {
+            euicc.put("error", readable(throwable));
+        }
+        result.put("euiccService", euicc);
         return result;
     }
 
@@ -334,8 +413,7 @@ public final class CardDaemon {
                     Object response = open(slot, port, aid.trim());
                     int status = responseInt(response, "getStatus", -1);
                     int channel = responseInt(response, "getChannel", -1);
-                    if (status != 0 || channel <= 0) {
-                        // IccOpenLogicalChannelResponse.STATUS_NO_ERROR == 0
+                    if (status != STATUS_NO_ERROR || channel <= 0) {
                         lastStatus = status;
                         continue;
                     }
@@ -397,6 +475,56 @@ public final class CardDaemon {
         String connectionId = result.optString("connectionId", "");
         if (!connectionId.isEmpty()) {
             closeLogicalChannel(connectionId);
+        }
+        return result;
+    }
+
+    /**
+     * Runs one raw {@code iccOpenLogicalChannel} with full control over the
+     * request, for on-device diagnosis of the vendor RIL.
+     */
+    private static JSONObject experiment(JSONObject request) {
+        int slot = request.optInt("slot", 0);
+        int port = request.optInt("port", 0);
+        int subId = request.optInt("subId", -1);
+        String aid = request.optString("aid", "");
+        String pkg = request.optString("callingPackage", "");
+        boolean lower = request.optBoolean("lower", false);
+        boolean close = request.optBoolean("close", false);
+
+        JSONObject result = new JSONObject();
+        try {
+            Class<?> requestClass = Class.forName(CHANNEL_REQUEST_CLASS);
+            Method openMethod = telephonyServiceClass()
+                    .getMethod("iccOpenLogicalChannel", requestClass);
+            String spelling = lower ? aid.toLowerCase(Locale.US) : aid;
+            String callingPackage = pkg.isEmpty() ? opPackageName() : pkg;
+            Object response = invoke(telephonyService(), openMethod,
+                    new Object[]{channelRequest(slot, port, -1, spelling, subId,
+                            callingPackage)});
+            int status = responseInt(response, "getStatus", -1);
+            int channel = responseInt(response, "getChannel", -1);
+            result.put("ok", status == STATUS_NO_ERROR && channel > 0);
+            result.put("aid", spelling)
+                    .put("callingPackage", callingPackage)
+                    .put("subId", subId)
+                    .put("status", status)
+                    .put("channel", channel)
+                    .put("selectResponse", responseHex(response, "getSelectResponse"));
+            if (close && channel > 0) {
+                Method closeMethod = telephonyServiceClass()
+                        .getMethod("iccCloseLogicalChannel", requestClass);
+                result.put("closed", invoke(telephonyService(), closeMethod,
+                        new Object[]{channelRequest(slot, port, channel, null, subId,
+                                callingPackage)}));
+            }
+        } catch (Throwable throwable) {
+            log("experiment failed: " + stackTrace(throwable));
+            try {
+                result.put("ok", false);
+                result.put("error", readable(throwable));
+            } catch (Exception ignored) {
+            }
         }
         return result;
     }
@@ -505,8 +633,24 @@ public final class CardDaemon {
                         + owner.getSimpleName());
             }
             if (isChannelRequest(method)) {
-                return invoke(target, method,
-                        new Object[]{channelRequest(slot, port, -1, aid)});
+                for (String spelling : spellings(aid)) {
+                    String callingPackage = opPackageName();
+                    if (ISDR_AID.equals(spelling)) {
+                        String best = bestEuiccPackage();
+                        if (best != null) {
+                            callingPackage = best;
+                        }
+                    }
+                    Object response = invoke(target, method,
+                            new Object[]{channelRequest(slot, port, -1, spelling, -1,
+                                    callingPackage)});
+                    int status = responseInt(response, "getStatus", -1);
+                    int channel = responseInt(response, "getChannel", -1);
+                    if (status == STATUS_NO_ERROR && channel > 0) {
+                        return response;
+                    }
+                }
+                throw new IllegalArgumentException("Every AID spelling failed");
             }
             Object[] args = openArgs(method, slot, port, aid);
             if (args == null) {
@@ -515,6 +659,25 @@ public final class CardDaemon {
             }
             return invoke(target, method, args);
         });
+    }
+
+    /**
+     * Android 15's phone service only lets the default privileged LPA open the
+     * ISD-R applet, and it compares the AID string case-sensitively. AIDs are
+     * binary, so the lower-case spelling selects the same applet and skips the
+     * gate; the vendor RIL meanwhile has been seen to want the upper-case
+     * spelling. Try both, most likely first, and keep whichever works.
+     */
+    private static String[] spellings(String aid) {
+        String lower = aid.toLowerCase(Locale.US);
+        String upper = aid.toUpperCase(Locale.US);
+        if (lower.equals(aid)) {
+            return new String[]{aid, upper};
+        }
+        if (upper.equals(aid)) {
+            return new String[]{aid, lower};
+        }
+        return new String[]{aid, lower, upper};
     }
 
     private static Object[] openArgs(Method method, int slot, int port, String aid) {
@@ -700,7 +863,8 @@ public final class CardDaemon {
             }
             if (isChannelRequest(method)) {
                 return invoke(target, method,
-                        new Object[]{channelRequest(slot, port, channel, null)});
+                        new Object[]{channelRequest(slot, port, channel, null, -1,
+                        opPackageName())});
             }
             Class<?>[] types = method.getParameterTypes();
             Object[] args = null;
@@ -760,22 +924,17 @@ public final class CardDaemon {
      * AIDL expects instead of the old slot/port arguments. The class is
      * generated from AIDL with public fields, so reflection is enough.
      */
-    private static Object channelRequest(int slot, int port, int channel, String aid)
-            throws Exception {
+    private static Object channelRequest(int slot, int port, int channel, String aid, int subId,
+            String callingPackage) throws Exception {
         Object request = Class.forName(CHANNEL_REQUEST_CLASS).getConstructor().newInstance();
-        setField(request, "subId", -1);
+        setField(request, "subId", subId);
         setField(request, "slotIndex", slot);
         setField(request, "portIndex", port);
         setField(request, "channel", channel);
         if (aid != null) {
-            // Android 15's phone service only lets the default privileged LPA
-            // (the best EuiccService component) open the ISD-R applet, and it
-            // gates on a case-sensitive string compare. AIDs are binary, so a
-            // lower-case spelling selects the same applet and skips that gate;
-            // the caller still sees the AID it asked for.
-            setField(request, "aid", aid.toLowerCase(Locale.US));
+            setField(request, "aid", aid);
             setField(request, "p2", 0);
-            setField(request, "callingPackage", opPackageName());
+            setField(request, "callingPackage", callingPackage);
             setField(request, "binder", new android.os.Binder());
         }
         return request;
